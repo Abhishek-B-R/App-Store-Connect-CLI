@@ -31,6 +31,12 @@ import (
 	"github.com/rudrankriyam/App-Store-Connect-CLI/internal/rootfs"
 )
 
+// maxPendingDeviceCallbackTokens bounds unused per-profile callback tokens so
+// repeated profile downloads cannot grow session memory without limit.
+const maxPendingDeviceCallbackTokens = 1024
+
+var errDeviceCallbackToken = errors.New("unknown registration token")
+
 type deviceURLServer struct {
 	token      string
 	name       string
@@ -44,6 +50,10 @@ type deviceURLServer struct {
 	devices    []asc.DeviceURLRegistration
 	mu         sync.Mutex
 	outputRows []deviceBatchRecord
+	// callbackTokens holds single-use callback tokens minted per served
+	// profile. A value is the normalized UDID the token is bound to after its
+	// first valid callback, or empty while unbound.
+	callbackTokens map[string]string
 }
 
 func serveDeviceRegistration(ctx context.Context, options deviceURLServeOptions) (*asc.DeviceURLRegistrationResult, error) {
@@ -178,7 +188,12 @@ func (server *deviceURLServer) profile(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unknown registration token", http.StatusForbidden)
 		return
 	}
-	callback := server.publicURL + "/callback?token=" + url.QueryEscape(server.token)
+	callbackToken, err := server.issueCallbackToken()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusServiceUnavailable)
+		return
+	}
+	callback := server.publicURL + "/callback?token=" + url.QueryEscape(callbackToken)
 	payload, err := deviceRegistrationProfile(callback)
 	if err != nil {
 		http.Error(w, "profile unavailable", http.StatusInternalServerError)
@@ -193,8 +208,9 @@ func (server *deviceURLServer) callback(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	if !server.validToken(r) {
-		http.Error(w, "unknown registration token", http.StatusForbidden)
+	token := r.URL.Query().Get("token")
+	if !server.pendingCallbackToken(token) {
+		http.Error(w, errDeviceCallbackToken.Error(), http.StatusForbidden)
 		return
 	}
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
@@ -212,7 +228,11 @@ func (server *deviceURLServer) callback(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	record, err := server.acceptDevice(r.Context(), udid, product)
+	record, err := server.acceptDevice(r.Context(), token, udid, product)
+	if errors.Is(err, errDeviceCallbackToken) {
+		http.Error(w, err.Error(), http.StatusForbidden)
+		return
+	}
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
@@ -225,7 +245,53 @@ func (server *deviceURLServer) validToken(r *http.Request) bool {
 	return subtleTokenEqual(r.URL.Query().Get("token"), server.token)
 }
 
-func (server *deviceURLServer) acceptDevice(ctx context.Context, udid, product string) (record asc.DeviceURLRegistration, err error) {
+// issueCallbackToken mints the single-use token embedded in one served profile.
+func (server *deviceURLServer) issueCallbackToken() (string, error) {
+	server.mu.Lock()
+	defer server.mu.Unlock()
+	if server.stopped {
+		return "", fmt.Errorf("registration session ended")
+	}
+	if len(server.callbackTokens) >= maxPendingDeviceCallbackTokens {
+		return "", fmt.Errorf("too many pending device registrations")
+	}
+	token, err := newDeviceRegistrationToken()
+	if err != nil {
+		return "", err
+	}
+	if server.callbackTokens == nil {
+		server.callbackTokens = map[string]string{}
+	}
+	server.callbackTokens[token] = ""
+	return token, nil
+}
+
+func (server *deviceURLServer) pendingCallbackToken(token string) bool {
+	if token == "" {
+		return false
+	}
+	server.mu.Lock()
+	defer server.mu.Unlock()
+	_, ok := server.callbackTokens[token]
+	return ok
+}
+
+// claimCallbackToken binds a pending token to the first UDID that uses it, so a
+// failed registration can be retried for that device but not reused for another.
+// The caller must hold server.mu.
+func (server *deviceURLServer) claimCallbackToken(token, normalizedUDID string) error {
+	bound, ok := server.callbackTokens[token]
+	if token == "" || !ok {
+		return errDeviceCallbackToken
+	}
+	if bound != "" && bound != normalizedUDID {
+		return fmt.Errorf("%w: token is bound to another device", errDeviceCallbackToken)
+	}
+	server.callbackTokens[token] = normalizedUDID
+	return nil
+}
+
+func (server *deviceURLServer) acceptDevice(ctx context.Context, token, udid, product string) (record asc.DeviceURLRegistration, err error) {
 	normalized := normalizeDeviceUDIDForComparison(udid)
 	name := strings.TrimSpace(server.name)
 	if name == "" {
@@ -243,6 +309,9 @@ func (server *deviceURLServer) acceptDevice(ctx context.Context, udid, product s
 	if server.stopped {
 		return record, fmt.Errorf("registration session ended")
 	}
+	if err := server.claimCallbackToken(token, normalized); err != nil {
+		return record, err
+	}
 	defer func() {
 		if err != nil {
 			if server.failures == nil {
@@ -253,6 +322,8 @@ func (server *deviceURLServer) acceptDevice(ctx context.Context, udid, product s
 			server.failures[normalized] = record
 		} else {
 			delete(server.failures, normalized)
+			// The token is spent once its device is recorded; replays are refused.
+			delete(server.callbackTokens, token)
 		}
 	}()
 	if err := ctx.Err(); err != nil {
@@ -312,7 +383,7 @@ func parseDeviceRegistrationCallback(body []byte) (string, string, error) {
 		return requireCallbackUDID(payload.UDID, payload.PRODUCT)
 	}
 	// iOS profile-service callbacks encapsulate the plist in CMS SignedData.
-	// Verify content integrity only; the registration URL token authorizes this
+	// Verify content integrity only; the single-use callback token authorizes this
 	// request. This does not authenticate an Apple-issued device identity.
 	if signed, err := pkcs7.Parse(body); err == nil {
 		if err := signed.Verify(); err != nil {
