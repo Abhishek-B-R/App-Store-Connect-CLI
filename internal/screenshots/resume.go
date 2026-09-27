@@ -103,13 +103,16 @@ type FrameResumeFingerprint struct {
 	SubtitleColor string
 	Background    string
 	OverlayHash   string
+	FrameColor    string
+	Font          string
+	TextPosition  string
 }
 
 // FingerprintFrameResume hashes every input that changes the framed image.
 const (
 	// frameResumeSchema changes when framed output generation changes without
 	// a corresponding Koubou pin bump.
-	frameResumeSchema = "2"
+	frameResumeSchema = "3"
 )
 
 func FingerprintFrameResume(fp FrameResumeFingerprint) string {
@@ -124,6 +127,9 @@ func FingerprintFrameResume(fp FrameResumeFingerprint) string {
 		fp.SubtitleColor,
 		fp.Background,
 		fp.OverlayHash,
+		fp.FrameColor,
+		fp.Font,
+		fp.TextPosition,
 	}, "\x00")))
 	return hex.EncodeToString(sum[:])
 }

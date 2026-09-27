@@ -124,6 +124,9 @@ func TestResolveKoubouOutputSize(t *testing.T) {
 		{name: "alternate named size", value: "iPhone6_9_alt", wantWidth: 1260, wantHeight: 2736, wantOK: true},
 		{name: "iphone 6.3 size", value: "iPhone6_3", wantWidth: 1206, wantHeight: 2622, wantOK: true},
 		{name: "desktop named size", value: "AppDesktop_2880", wantWidth: 2880, wantHeight: 1800, wantOK: true},
+		{name: "ipad 13 named size", value: "iPadPro13", wantWidth: 2064, wantHeight: 2752, wantOK: true},
+		{name: "ipad 12.9 named size", value: "iPadPro12_9", wantWidth: 2048, wantHeight: 2732, wantOK: true},
+		{name: "ipad 11 named size", value: "iPadPro11", wantWidth: 1668, wantHeight: 2388, wantOK: true},
 		{name: "custom list", value: []any{1200, 2500}, wantWidth: 1200, wantHeight: 2500, wantOK: true},
 		{name: "unknown name", value: "iphone7_2", wantOK: false},
 		{name: "invalid list", value: []any{"bad", 2}, wantOK: false},
@@ -142,6 +145,19 @@ func TestResolveKoubouOutputSize(t *testing.T) {
 				t.Fatalf("dimensions = %dx%d, want %dx%d", width, height, test.wantWidth, test.wantHeight)
 			}
 		})
+	}
+}
+
+func TestKoubouDisplayTypeForIPadSizeNames(t *testing.T) {
+	for sizeName, want := range map[string]string{
+		"iPadPro13":   "APP_IPAD_PRO_3GEN_129",
+		"iPadPro12_9": "APP_IPAD_PRO_3GEN_129",
+		"iPadPro11":   "APP_IPAD_PRO_3GEN_11",
+	} {
+		got, ok := koubouDisplayTypeForSizeName(sizeName)
+		if !ok || got != want {
+			t.Fatalf("koubouDisplayTypeForSizeName(%q) = %q, %v; want %q", sizeName, got, ok, want)
+		}
 	}
 }
 

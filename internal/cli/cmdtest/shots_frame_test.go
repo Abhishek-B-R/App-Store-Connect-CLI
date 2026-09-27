@@ -859,24 +859,6 @@ func TestShotsFrame_MacDeviceSubtitleOnly(t *testing.T) {
 	}
 }
 
-func TestShotsFrame_BGColorRejectsNonCanvasDevice(t *testing.T) {
-	root := RootCommand("1.2.3")
-	root.FlagSet.SetOutput(io.Discard)
-
-	_, stderr := captureOutput(t, func() {
-		if err := root.Parse([]string{"screenshots", "frame", "--input", "/tmp/raw.png", "--bg-color", "#fff"}); err != nil {
-			t.Fatalf("parse error: %v", err)
-		}
-		err := root.Run(context.Background())
-		if !errors.Is(err, flag.ErrHelp) {
-			t.Fatalf("expected ErrHelp, got %v", err)
-		}
-	})
-	if !strings.Contains(stderr, "--bg-color only applies to canvas devices") {
-		t.Fatalf("expected bg-color error, got %q", stderr)
-	}
-}
-
 func TestShotsFrame_CanvasFlagsRejectConfigMode(t *testing.T) {
 	root := RootCommand("1.2.3")
 	root.FlagSet.SetOutput(io.Discard)

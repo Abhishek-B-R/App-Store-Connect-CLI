@@ -19,3 +19,13 @@ func SetFrameFunc(fn func(context.Context, screenshots.FrameRequest) (*screensho
 		shotsFrameFn = previous
 	}
 }
+
+// SetFrameOutputFoldsCase forces whether --input-dir treats output names as
+// case-insensitive, for tests. It returns a restore function.
+func SetFrameOutputFoldsCase(fold bool) func() {
+	previous := frameOutputFoldsCaseFn
+	frameOutputFoldsCaseFn = func(string) bool { return fold }
+	return func() {
+		frameOutputFoldsCaseFn = previous
+	}
+}

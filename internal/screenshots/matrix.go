@@ -3999,13 +3999,6 @@ func matrixDeviceFamily(value string) string {
 	}
 }
 
-func frameDeviceFamily(device FrameDevice) string {
-	if device == FrameDeviceMac {
-		return "mac"
-	}
-	return "iphone"
-}
-
 type matrixSimulatorDevice struct {
 	UDID                 string `json:"udid"`
 	State                string `json:"state"`

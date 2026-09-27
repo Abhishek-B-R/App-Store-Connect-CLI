@@ -872,6 +872,20 @@ func TestValidateMatrixFrameMappingForSimulatorUsesActualFamily(t *testing.T) {
 	}
 }
 
+func TestValidateMatrixFrameMappingRejectsTabletFrameForPhoneSimulator(t *testing.T) {
+	phone := matrixSimulatorDevice{
+		Name:                 "iPhone 16 Pro",
+		DeviceTypeIdentifier: "com.apple.CoreSimulator.SimDeviceType.iPhone-16-Pro",
+	}
+	for _, frame := range []string{"ipad-pro-13", "watch-ultra-3", "apple-tv"} {
+		err := validateMatrixFrameMappingForSimulator("phone", frame, phone)
+		var mappingErr *matrixFrameMappingError
+		if !errors.As(err, &mappingErr) || mappingErr.code != matrixPreflightFrameMismatch {
+			t.Fatalf("validateMatrixFrameMappingForSimulator(%q) error = %v, want frame family mismatch", frame, err)
+		}
+	}
+}
+
 func TestCheckMatrixDeviceRejectsOversizedInventory(t *testing.T) {
 	skipWindowsUnixExecutableFixtures(t)
 	binDir := t.TempDir()
