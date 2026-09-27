@@ -48,7 +48,7 @@ func rejectDeviceWithoutCreateMissing(deviceIDs string, createMissing bool) erro
 func SigningFetchCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("fetch", flag.ExitOnError)
 
-	appID := fs.String("app", "", "App Store Connect app ID (optional); when set, --bundle-id must be this app's bundle ID")
+	appID := shared.BindResourceIDFlag(fs, "app", "apps", "App Store Connect app ID (optional); when set, --bundle-id must be this app's bundle ID")
 	bundleID := fs.String("bundle-id", "", "Bundle identifier (e.g., com.example.app) - required")
 	profileType := fs.String("profile-type", "", "Profile type: IOS_APP_STORE, IOS_APP_DEVELOPMENT, MAC_APP_STORE, etc. (required)")
 	deviceIDs := fs.String("device", "", "Device ID(s), comma-separated (requires --create-missing; required for development profiles)")

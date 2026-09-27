@@ -3,13 +3,13 @@ package artifacts
 import (
 	"archive/zip"
 	"bytes"
-	"compress/zlib"
 	"encoding/binary"
 	"hash/crc32"
-	"strconv"
 	"testing"
 
 	"howett.net/plist"
+
+	"github.com/rudrankriyam/App-Store-Connect-CLI/internal/artifacts/artifactstest"
 )
 
 func TestInspectIPAReadsExtensionAndProfile(t *testing.T) {
@@ -159,30 +159,11 @@ func plistXML(t *testing.T, value map[string]any) []byte {
 
 func writeXar(t *testing.T, files map[string][]byte) []byte {
 	t.Helper()
-	var heap bytes.Buffer
-	var filesXML bytes.Buffer
-	id := 1
-	for name, data := range files {
-		offset := heap.Len()
-		heap.Write(data)
-		filesXML.WriteString(`<file id="` + strconv.Itoa(id) + `"><name>` + name + `</name><type>file</type><data><length>` + strconv.Itoa(len(data)) + `</length><offset>` + strconv.Itoa(offset) + `</offset><size>` + strconv.Itoa(len(data)) + `</size><encoding style="application/octet-stream"/></data></file>`)
-		id++
-	}
-	toc := []byte(`<xar><toc>` + filesXML.String() + `</toc></xar>`)
-	var compressed bytes.Buffer
-	encoder := zlib.NewWriter(&compressed)
-	if _, err := encoder.Write(toc); err != nil {
-		t.Fatal(err)
-	}
-	if err := encoder.Close(); err != nil {
-		t.Fatal(err)
-	}
-	header := make([]byte, 28)
-	copy(header[:4], "xar!")
-	binary.BigEndian.PutUint16(header[4:6], 28)
-	binary.BigEndian.PutUint16(header[6:8], 1)
-	binary.BigEndian.PutUint64(header[8:16], uint64(compressed.Len()))
-	binary.BigEndian.PutUint64(header[16:24], uint64(len(toc)))
-	binary.BigEndian.PutUint32(header[24:28], 0)
-	return append(append(header, compressed.Bytes()...), heap.Bytes()...)
+	return writeXarWithTOCExtra(t, files, "")
+}
+
+// writeXarWithTOCExtra appends raw XML, such as signature elements, to the TOC.
+func writeXarWithTOCExtra(t *testing.T, files map[string][]byte, extra string) []byte {
+	t.Helper()
+	return artifactstest.Xar(t, files, extra)
 }

@@ -166,7 +166,7 @@ func newMetadataMutationCommand(cfg metadataMutationCommandConfig) *ffcli.Comman
 	fs := flag.NewFlagSet("metadata "+cfg.name, flag.ExitOnError)
 
 	appID := fs.String("app", "", "App Store Connect app ID (or ASC_APP_ID env)")
-	appInfoID := fs.String("app-info", "", "App Info ID (optional override)")
+	appInfoID := shared.BindResourceIDFlag(fs, "app-info", "appInfos", "App Info ID (optional override)")
 	version := fs.String("version", "", "App version string (for example 1.2.3)")
 	platform := fs.String("platform", "", "Optional platform: IOS, MAC_OS, TV_OS, or VISION_OS")
 	dir := fs.String("dir", "", "Metadata root directory (required)")

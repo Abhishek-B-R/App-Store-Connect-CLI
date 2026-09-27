@@ -24,6 +24,9 @@ func TestDevicesRegisterURLValidation(t *testing.T) {
 		{"public url path", []string{"--via-url", "--public-url", "https://example.com/asc"}, "--public-url"},
 		{"unused listen", []string{"--listen", "127.0.0.1:0", "--name", "phone", "--udid", "123", "--platform", "IOS"}, "--listen requires --via-url"},
 		{"output with confirm", []string{"--via-url", "--confirm"}, "--output-file cannot"},
+		{"stream table", []string{"--via-url", "--stream", "--output", "table"}, "--stream requires --output json"},
+		{"stream markdown", []string{"--via-url", "--stream", "--output", "markdown"}, "--stream requires --output json"},
+		{"stream pretty", []string{"--via-url", "--stream", "--output", "json", "--pretty"}, "--stream cannot be combined with --pretty"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			outputPath := filepath.Join(t.TempDir(), "devices.tsv")
@@ -43,6 +46,21 @@ func TestDevicesRegisterURLValidation(t *testing.T) {
 				t.Fatalf("validation created output file: %v", err)
 			}
 		})
+	}
+}
+
+func TestDevicesRegisterStreamRequiresViaURL(t *testing.T) {
+	root := RootCommand("test")
+	if err := root.Parse([]string{"devices", "register", "--stream", "--name", "phone", "--udid", "123", "--platform", "IOS"}); err != nil {
+		t.Fatal(err)
+	}
+	var runErr error
+	stdout, stderr := captureOutput(t, func() { runErr = root.Run(context.Background()) })
+	if !errors.Is(runErr, flag.ErrHelp) || !strings.Contains(stderr, "--stream requires --via-url") {
+		t.Fatalf("want --stream usage error; err=%v stderr=%q", runErr, stderr)
+	}
+	if stdout != "" {
+		t.Fatalf("stdout = %q", stdout)
 	}
 }
 

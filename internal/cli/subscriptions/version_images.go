@@ -232,7 +232,7 @@ func SubscriptionsVersionImagesPrimaryLinkCommand() *ffcli.Command {
 // SubscriptionsVersionImagesViewCommand views a v2 image.
 func SubscriptionsVersionImagesViewCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("versions images view", flag.ExitOnError)
-	id := fs.String("id", "", "Subscription image ID")
+	id := shared.BindResourceIDFlag(fs, "id", "subscriptionImages", "Subscription image ID")
 	fields := fs.String("fields", "", "Sparse fields for subscriptionImages")
 	output := shared.BindOutputFlags(fs)
 	return &ffcli.Command{
@@ -326,7 +326,7 @@ func SubscriptionsVersionImagesUploadCommand() *ffcli.Command {
 // SubscriptionsVersionImagesUpdateCommand updates the uploaded state.
 func SubscriptionsVersionImagesUpdateCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("versions images update", flag.ExitOnError)
-	id := fs.String("id", "", "Subscription image ID")
+	id := shared.BindResourceIDFlag(fs, "id", "subscriptionImages", "Subscription image ID")
 	var uploaded shared.OptionalBool
 	fs.Var(&uploaded, "uploaded", "Mark upload complete: true or false")
 	output := shared.BindOutputFlags(fs)
@@ -364,7 +364,7 @@ func SubscriptionsVersionImagesUpdateCommand() *ffcli.Command {
 // SubscriptionsVersionImagesDeleteCommand deletes a v2 image.
 func SubscriptionsVersionImagesDeleteCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("versions images delete", flag.ExitOnError)
-	id := fs.String("id", "", "Subscription image ID")
+	id := shared.BindResourceIDFlag(fs, "id", "subscriptionImages", "Subscription image ID")
 	confirm := fs.Bool("confirm", false, "Confirm deletion")
 	output := shared.BindOutputFlags(fs)
 	return &ffcli.Command{

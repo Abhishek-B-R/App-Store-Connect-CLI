@@ -92,6 +92,7 @@ Examples:
   asc xcode-cloud build-runs view --id "BUILD_RUN_ID" --output table`,
 		IDFlag:      "id",
 		IDUsage:     "Build run ID",
+		IDType:      "ciBuildRuns",
 		ErrorPrefix: "xcode-cloud build-runs view",
 		ContextTimeout: func(ctx context.Context) (context.Context, context.CancelFunc) {
 			return contextWithXcodeCloudTimeout(ctx, 0)
