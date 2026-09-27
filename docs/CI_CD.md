@@ -99,6 +99,10 @@ target has no matching profile; check `ready` before applying.
 
 Expired or invalid profiles can already be removed with
 `asc signing fetch --delete-stale-profiles`, and certificates can be
-deactivated or revoked with `asc certificates`. Not available yet: an
-object-storage backend for `signing sync`, and automatic certificate and
-profile renewal, bulk cleanup, and device refresh. Both are planned.
+deactivated or revoked with `asc certificates`. With Git storage,
+`asc signing sync push --renew-expired` replaces an expired synced profile,
+`--force-for-new-devices` (optionally with `--include-mac-in-profiles`)
+recreates a development or ad hoc profile when its devices change, and
+`asc signing sync nuke` removes one profile type with its certificates and
+encrypted files. Not available yet: an object-storage backend for
+`signing sync`, which is planned.
