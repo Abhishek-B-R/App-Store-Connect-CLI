@@ -78,7 +78,7 @@ func AppSetupInfoSetCommand() *ffcli.Command {
 	bundleID := fs.String("bundle-id", "", "Bundle ID to set")
 	primaryLocale := fs.String("primary-locale", "", "Primary locale (e.g., en-US)")
 	locale := fs.String("locale", "", "Locale for app info localization (defaults to --primary-locale)")
-	appInfoID := fs.String("app-info", "", "App Info ID (optional override)")
+	appInfoID := shared.BindResourceIDFlag(fs, "app-info", "appInfos", "App Info ID (optional override)")
 	name := fs.String("name", "", "Localized app name")
 	subtitle := fs.String("subtitle", "", "Localized app subtitle")
 	privacyPolicyURL := fs.String("privacy-policy-url", "", "Localized privacy policy URL")
@@ -101,7 +101,10 @@ Examples:
 		FlagSet:   fs,
 		UsageFunc: shared.DefaultUsageFunc,
 		Exec: func(ctx context.Context, args []string) error {
-			appIDValue := strings.TrimSpace(*appID)
+			appIDValue, err := shared.AppIDFlagValue(*appID)
+			if err != nil {
+				return err
+			}
 			if appIDValue == "" {
 				fmt.Fprintln(os.Stderr, "Error: --app is required")
 				return shared.MissingRequiredUsageError("--app")
@@ -395,9 +398,9 @@ Examples:
 func AppSetupLocalizationsUploadCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("app-setup localizations upload", flag.ExitOnError)
 
-	versionID := fs.String("version", "", "App Store version ID")
+	versionID := shared.BindResourceIDFlag(fs, "version", "appStoreVersions", "App Store version ID")
 	appID := fs.String("app", "", "App Store Connect app ID (or ASC_APP_ID env)")
-	appInfoID := fs.String("app-info", "", "App Info ID (optional override)")
+	appInfoID := shared.BindResourceIDFlag(fs, "app-info", "appInfos", "App Info ID (optional override)")
 	locType := fs.String("type", shared.LocalizationTypeVersion, "Localization type: version (default) or app-info")
 	locale := fs.String("locale", "", "Filter by locale(s), comma-separated")
 	path := fs.String("path", "", "Input path (directory or .strings file)")

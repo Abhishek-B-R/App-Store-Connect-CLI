@@ -150,7 +150,7 @@ Examples:
 func GameCenterGroupsGetCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("view", flag.ExitOnError)
 
-	groupID := fs.String("id", "", "Game Center group ID")
+	groupID := shared.BindResourceIDFlag(fs, "id", "gameCenterGroups", "Game Center group ID")
 	output := shared.BindOutputFlags(fs)
 
 	return &ffcli.Command{
@@ -234,7 +234,7 @@ Examples:
 func GameCenterGroupsUpdateCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("update", flag.ExitOnError)
 
-	groupID := fs.String("id", "", "Game Center group ID")
+	groupID := shared.BindResourceIDFlag(fs, "id", "gameCenterGroups", "Game Center group ID")
 	referenceName := fs.String("reference-name", "", "Reference name for the group")
 	output := shared.BindOutputFlags(fs)
 
@@ -283,7 +283,7 @@ Examples:
 func GameCenterGroupsDeleteCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("delete", flag.ExitOnError)
 
-	groupID := fs.String("id", "", "Game Center group ID")
+	groupID := shared.BindResourceIDFlag(fs, "id", "gameCenterGroups", "Game Center group ID")
 	confirm := fs.Bool("confirm", false, "Confirm deletion")
 	output := shared.BindOutputFlags(fs)
 

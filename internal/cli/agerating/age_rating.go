@@ -155,7 +155,7 @@ Examples:
 func AgeRatingEditCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("age-rating edit", flag.ExitOnError)
 
-	id := fs.String("id", "", "Age rating declaration ID (optional)")
+	id := shared.BindResourceIDFlag(fs, "id", "ageRatingDeclarations", "Age rating declaration ID (optional)")
 	appID := fs.String("app", os.Getenv("ASC_APP_ID"), "App ID (required unless --id, --app-info-id, or --version-id is provided)")
 	appInfoID := shared.BindResourceIDFlag(fs, "app-info-id", "appInfos", "App info ID (optional)")
 	versionID := shared.BindResourceIDFlag(fs, "version-id", "appStoreVersions", "App Store version ID (optional)")

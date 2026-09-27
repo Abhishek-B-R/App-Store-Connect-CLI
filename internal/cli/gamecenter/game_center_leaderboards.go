@@ -139,7 +139,7 @@ Examples:
 func GameCenterLeaderboardImagesDeleteCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("delete", flag.ExitOnError)
 
-	imageID := fs.String("id", "", "Game Center leaderboard image ID")
+	imageID := shared.BindResourceIDFlag(fs, "id", "gameCenterLeaderboardImages", "Game Center leaderboard image ID")
 	confirm := fs.Bool("confirm", false, "Confirm deletion")
 	output := shared.BindOutputFlags(fs)
 
@@ -286,7 +286,7 @@ Examples:
 func GameCenterLeaderboardsGetCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("view", flag.ExitOnError)
 
-	leaderboardID := fs.String("id", "", "Game Center leaderboard ID")
+	leaderboardID := shared.BindResourceIDFlag(fs, "id", "gameCenterLeaderboards", "Game Center leaderboard ID")
 	v2 := fs.Bool("v2", false, "Use v2 leaderboards endpoint")
 	output := shared.BindOutputFlags(fs)
 
@@ -468,7 +468,7 @@ Examples:
 func GameCenterLeaderboardsUpdateCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("update", flag.ExitOnError)
 
-	leaderboardID := fs.String("id", "", "Game Center leaderboard ID")
+	leaderboardID := shared.BindResourceIDFlag(fs, "id", "gameCenterLeaderboards", "Game Center leaderboard ID")
 	referenceName := fs.String("reference-name", "", "Reference name for the leaderboard")
 	archived := fs.String("archived", "", "Archive the leaderboard (true/false)")
 	v2 := fs.Bool("v2", false, "Use v2 leaderboards endpoint")
@@ -544,7 +544,7 @@ Examples:
 func GameCenterLeaderboardsDeleteCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("delete", flag.ExitOnError)
 
-	leaderboardID := fs.String("id", "", "Game Center leaderboard ID")
+	leaderboardID := shared.BindResourceIDFlag(fs, "id", "gameCenterLeaderboards", "Game Center leaderboard ID")
 	confirm := fs.Bool("confirm", false, "Confirm deletion")
 	v2 := fs.Bool("v2", false, "Use v2 leaderboards endpoint")
 	output := shared.BindOutputFlags(fs)
@@ -718,7 +718,7 @@ Examples:
 func GameCenterLeaderboardGroupLeaderboardGetCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("view", flag.ExitOnError)
 
-	leaderboardID := fs.String("id", "", "Game Center leaderboard ID")
+	leaderboardID := shared.BindResourceIDFlag(fs, "id", "gameCenterLeaderboards", "Game Center leaderboard ID")
 	output := shared.BindOutputFlags(fs)
 
 	return &ffcli.Command{
@@ -920,7 +920,7 @@ Examples:
 func GameCenterLeaderboardReleasesDeleteCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("delete", flag.ExitOnError)
 
-	releaseID := fs.String("id", "", "Game Center leaderboard release ID")
+	releaseID := shared.BindResourceIDFlag(fs, "id", "gameCenterLeaderboardReleases", "Game Center leaderboard release ID")
 	confirm := fs.Bool("confirm", false, "Confirm deletion")
 	output := shared.BindOutputFlags(fs)
 

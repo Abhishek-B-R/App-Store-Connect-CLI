@@ -44,7 +44,7 @@ Examples:
 func AppClipReviewDetailsGetCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("view", flag.ExitOnError)
 
-	detailID := fs.String("id", "", "Review detail ID")
+	detailID := shared.BindResourceIDFlag(fs, "id", "appClipAppStoreReviewDetails", "Review detail ID")
 	output := shared.BindOutputFlags(fs)
 
 	return &ffcli.Command{
@@ -136,7 +136,7 @@ Examples:
 func AppClipReviewDetailsUpdateCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("update", flag.ExitOnError)
 
-	detailID := fs.String("id", "", "Review detail ID")
+	detailID := shared.BindResourceIDFlag(fs, "id", "appClipAppStoreReviewDetails", "Review detail ID")
 	urls := shared.BindOnceCSVFlag(fs, "url", "Invocation URL(s), comma-separated")
 	output := shared.BindOutputFlags(fs)
 

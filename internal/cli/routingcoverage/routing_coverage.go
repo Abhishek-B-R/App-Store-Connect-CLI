@@ -85,7 +85,7 @@ Examples:
 func RoutingCoverageInfoCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("routing-coverage info", flag.ExitOnError)
 
-	coverageID := fs.String("id", "", "Routing app coverage ID (required)")
+	coverageID := shared.BindResourceIDFlag(fs, "id", "routingAppCoverages", "Routing app coverage ID (required)")
 	output := shared.BindOutputFlags(fs)
 
 	return &ffcli.Command{
@@ -178,7 +178,7 @@ Examples:
 func RoutingCoverageDeleteCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("routing-coverage delete", flag.ExitOnError)
 
-	coverageID := fs.String("id", "", "Routing app coverage ID (required)")
+	coverageID := shared.BindResourceIDFlag(fs, "id", "routingAppCoverages", "Routing app coverage ID (required)")
 	confirm := fs.Bool("confirm", false, "Confirm deletion")
 	output := shared.BindOutputFlags(fs)
 
