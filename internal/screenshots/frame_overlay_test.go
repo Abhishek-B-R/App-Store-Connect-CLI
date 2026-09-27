@@ -223,7 +223,9 @@ func TestOverlayFixtureConvertsToRendererConfigGolden(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := strings.ReplaceAll(string(data), workDir, "$WORK")
+	// Pin separators too: the generated YAML carries native paths, so a
+	// Windows run joins $WORK and file names with backslashes.
+	got := strings.ReplaceAll(string(data), workDir+string(filepath.Separator), "$WORK/")
 	goldenPath := filepath.Join("testdata", "overlay-config.ipad-pro-13.golden.yaml")
 	if os.Getenv("ASC_UPDATE_GOLDEN") == "1" {
 		if err := os.WriteFile(goldenPath, []byte(got), 0o644); err != nil {
