@@ -7,6 +7,9 @@ import (
 	"os"
 	"strings"
 	"time"
+	// Embed the IANA time zone database so the US Pacific default for
+	// --start-date works without system zoneinfo (Windows, minimal containers).
+	_ "time/tzdata"
 
 	"github.com/peterbourgon/ff/v3/ffcli"
 
@@ -144,13 +147,16 @@ func NewPricingSetCommand(config PricingSetCommandConfig) *ffcli.Command {
 			}
 
 			// Resolve the default after every preliminary lookup so a request
-			// that crosses UTC midnight still sends today's date, never a past
-			// one Apple would reject.
+			// that crosses US Pacific midnight still sends today's date, never
+			// a past one Apple would reject.
 			if startDateDefaulted {
-				normalizedStartDate = time.Now().UTC().Format(pricingStartDateLayout)
+				normalizedStartDate, err = pricingDefaultStartDate(pricingNow())
+				if err != nil {
+					return fmt.Errorf("%s: %w", config.ErrorPrefix, err)
+				}
 				fmt.Fprintf(
 					os.Stderr,
-					"Note: --start-date not set; using %s (today, UTC). Apple requires today or later.\n",
+					"Note: --start-date not set; using %s (today in US Pacific time, which App Store Connect uses). Apple requires today or later.\n",
 					normalizedStartDate,
 				)
 			}
@@ -195,6 +201,24 @@ func priceSelectionFlag(tier int, price string, free bool) string {
 // pricingStartDateLayout is the date-only layout App Store Connect expects for
 // appPrices startDate ("format": "date" in the OpenAPI snapshot).
 const pricingStartDateLayout = "2006-01-02"
+
+// pricingStartDateTimeZone is the zone App Store Connect uses to decide
+// "today" for appPriceSchedules start dates. Live checks on 2026-09-27 at
+// 00:03 UTC rejected the UTC date (2026-09-27) as in the future and accepted
+// the US Pacific date (2026-09-26).
+const pricingStartDateTimeZone = "America/Los_Angeles"
+
+// pricingNow is the clock used for the default --start-date.
+var pricingNow = time.Now
+
+// pricingDefaultStartDate returns today's date in US Pacific time.
+func pricingDefaultStartDate(now time.Time) (string, error) {
+	location, err := time.LoadLocation(pricingStartDateTimeZone)
+	if err != nil {
+		return "", fmt.Errorf("load %s time zone for default --start-date: %w", pricingStartDateTimeZone, err)
+	}
+	return now.In(location).Format(pricingStartDateLayout), nil
+}
 
 func normalizePricingStartDate(value string) (string, error) {
 	trimmed := strings.TrimSpace(value)

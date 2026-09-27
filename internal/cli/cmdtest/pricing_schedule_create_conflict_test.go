@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/rudrankriyam/App-Store-Connect-CLI/cmd"
 	"github.com/rudrankriyam/App-Store-Connect-CLI/internal/asc"
@@ -257,7 +258,12 @@ func TestPricingScheduleCreateExplainsDefaultStartDateAheadOfAppStoreConnect(t *
 	setupAuth(t)
 	t.Setenv("ASC_CONFIG_PATH", filepath.Join(t.TempDir(), "nonexistent.json"))
 	// Captured at 00:03 UTC on 2026-09-27: the UTC date was rejected as in the
-	// future while the US Pacific date (2026-09-26) was accepted.
+	// future while the US Pacific date (2026-09-26) was accepted. The default
+	// is now the US Pacific date, so the same rejection of a defaulted date
+	// points at the local clock or an undocumented App Store Connect time zone.
+	t.Cleanup(shared.SetPricingNowForTesting(func() time.Time {
+		return time.Date(2026, time.September, 27, 0, 3, 0, 0, time.UTC)
+	}))
 	server, _ := newAppPriceScheduleCreateServer(t, http.StatusConflict, readPricingScheduleConflictFixture(t, "start_date_utc_today_future.json"))
 	useServerTransport(t, server)
 
@@ -269,13 +275,15 @@ func TestPricingScheduleCreateExplainsDefaultStartDateAheadOfAppStoreConnect(t *
 	if runErr == nil {
 		t.Fatal("expected conflict error")
 	}
-	if !strings.Contains(stderr, "Note: --start-date not set; using ") {
-		t.Fatalf("expected the default start date note on stderr, got %q", stderr)
+	if !strings.Contains(stderr, "Note: --start-date not set; using 2026-09-26 (today in US Pacific time") {
+		t.Fatalf("expected the US Pacific default start date note on stderr, got %q", stderr)
 	}
 	message := runErr.Error()
-	if !strings.HasPrefix(message, "pricing schedule create: App Store Connect treats the default start date ") ||
-		!strings.Contains(message, " (today, UTC) as in the future. Retry with --start-date set to today's date in US Pacific time. ") {
-		t.Fatalf("error = %q, want the defaulted future start date explanation", message)
+	want := "pricing schedule create: App Store Connect treats the default start date 2026-09-26 (today in US Pacific time) as in the future. " +
+		"App Store Connect used the US Pacific date as today in live checks, but its time zone is not documented. " +
+		"Check the system clock, or pass --start-date with the date App Store Connect accepts as today."
+	if !strings.HasPrefix(message, want+"\n\n") {
+		t.Fatalf("error = %q, want prefix %q", message, want)
 	}
 	if !strings.Contains(message, "\n\nApp Store Connect: There is a problem with the request entity: Entire timeline must be covered for USA.") {
 		t.Fatalf("error = %q, want Apple's original response preserved", message)
