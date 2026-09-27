@@ -356,15 +356,16 @@ func AppSetupPricingSetCommand() *ffcli.Command {
 		ShortHelp:   "Set app pricing.",
 		LongHelp: `Set app pricing.
 
---start-date defaults to today's date in UTC when omitted, and the chosen date
-is printed on stderr. Apple requires the start date to be today or later.
+--start-date defaults to today's date in US Pacific time when omitted, because
+App Store Connect uses that date as today; the chosen date is printed on
+stderr. Apple requires the start date to be today or later.
 
 Examples:
   asc app-setup pricing set --app "APP_ID" --price-point "PRICE_POINT_ID" --base-territory "USA"
   asc app-setup pricing set --app "APP_ID" --price-point "PRICE_POINT_ID" --base-territory "USA" --start-date "YYYY-MM-DD"
   asc app-setup pricing set --app "APP_ID" --free --start-date "YYYY-MM-DD"`,
 		ErrorPrefix:           "app-setup pricing set",
-		StartDateHelp:         "Start date (YYYY-MM-DD, default: today in UTC; Apple requires today or later)",
+		StartDateHelp:         "Start date (YYYY-MM-DD, default: today in US Pacific time; Apple requires today or later)",
 		StartDateDefaultToday: true,
 		ResolveBaseTerritory:  true,
 	})

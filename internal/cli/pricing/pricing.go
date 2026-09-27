@@ -401,15 +401,16 @@ func PricingScheduleCreateCommand() *ffcli.Command {
 		ShortHelp:   "Create an app price schedule.",
 		LongHelp: `Create an app price schedule.
 
---start-date defaults to today's date in UTC when omitted, and the chosen date
-is printed on stderr. Apple requires the start date to be today or later.
+--start-date defaults to today's date in US Pacific time when omitted, because
+App Store Connect uses that date as today; the chosen date is printed on
+stderr. Apple requires the start date to be today or later.
 
 Examples:
   asc pricing schedule create --app "123456789" --price-point "PRICE_POINT_ID" --base-territory "United States" --start-date "YYYY-MM-DD"
   asc pricing schedule create --app "123456789" --price-point "PRICE_POINT_ID" --base-territory "United States"
   asc pricing schedule create --app "123456789" --free --base-territory "US" --start-date "YYYY-MM-DD"`,
 		ErrorPrefix:           "pricing schedule create",
-		StartDateHelp:         "Start date (YYYY-MM-DD, default: today in UTC; Apple requires today or later)",
+		StartDateHelp:         "Start date (YYYY-MM-DD, default: today in US Pacific time; Apple requires today or later)",
 		StartDateDefaultToday: true,
 		RequireBaseTerritory:  true,
 	})
