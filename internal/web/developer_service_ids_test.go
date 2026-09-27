@@ -800,3 +800,141 @@ func TestSetDeveloperServiceIDDomainsNoOpAndUnverifiedWrites(t *testing.T) {
 		})
 	}
 }
+
+// serviceIDDomainsFixtureMeta is the captured bundleIdCapabilities relationship
+// meta in serviceIDDetailCapabilityGraphFixture; completeness tests rewrite it.
+const serviceIDDomainsFixtureMeta = `,"meta":{"opaque":"keep","request":"preflight","paging":{"total":0,"limit":2147483647}}`
+
+func serviceIDDomainsFixtureWithCapabilityMeta(meta string) string {
+	return strings.Replace(serviceIDDetailCapabilityGraphFixture("Service", false), serviceIDDomainsFixtureMeta, meta, 1)
+}
+
+func serviceIDDomainsTruncatedFixture() string {
+	body := serviceIDDomainsFixtureWithCapabilityMeta("")
+	body = strings.Replace(body, `[{"type":"bundleIdCapabilities","id":"cap-1"},{"type":"bundleIdCapabilities","id":"cap-2"}]`, `[{"type":"bundleIdCapabilities","id":"cap-1"}]`, 1)
+	start := strings.Index(body, `,{"type":"bundleIdCapabilities","id":"cap-2"`)
+	end := strings.LastIndex(body, `]}`)
+	if start < 0 || end < start {
+		panic("capability fixture shape changed")
+	}
+	return body[:start] + body[end:]
+}
+
+func TestSetDeveloperServiceIDDomainsRejectsUnprovenCapabilityCompletenessBeforeMutation(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body string
+		want string
+	}{
+		{"truncated linkage without meta", serviceIDDomainsTruncatedFixture(), "paging metadata"},
+		{"missing meta", serviceIDDomainsFixtureWithCapabilityMeta(""), "paging metadata"},
+		{"null meta", serviceIDDomainsFixtureWithCapabilityMeta(`,"meta":null`), "paging metadata"},
+		{"missing paging", serviceIDDomainsFixtureWithCapabilityMeta(`,"meta":{"opaque":"keep"}`), "paging metadata"},
+		{"total absent", serviceIDDomainsFixtureWithCapabilityMeta(`,"meta":{"paging":{"limit":2147483647}}`), "paging total"},
+		{"null total", serviceIDDomainsFixtureWithCapabilityMeta(`,"meta":{"paging":{"total":null,"limit":50}}`), "paging total"},
+		{"limit less than count", serviceIDDomainsFixtureWithCapabilityMeta(`,"meta":{"paging":{"total":2,"limit":1}}`), "limit of 1"},
+		{"placeholder total with smaller limit", serviceIDDomainsFixtureWithCapabilityMeta(`,"meta":{"paging":{"total":0,"limit":50}}`), "returned 2 of 0"},
+		{"total larger than count", serviceIDDomainsFixtureWithCapabilityMeta(`,"meta":{"paging":{"total":3,"limit":50}}`), "returned 2 of 3"},
+		{"next link with exact total", strings.Replace(serviceIDDomainsFixtureWithCapabilityMeta(`,"meta":{"paging":{"total":2,"limit":50}}`), `"self":"/relationships/preflight"`, `"next":"/relationships/next"`, 1), "paginated"},
+		{"next link with placeholder", strings.Replace(serviceIDDetailCapabilityGraphFixture("Service", false), `"self":"/relationships/preflight"`, `"next":"/relationships/next"`, 1), "paginated"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			calls := 0
+			client := developerPortalTestClient(t, func(r *http.Request) (*http.Response, error) {
+				calls++
+				if calls == 1 {
+					return developerPortalTestResponse(http.StatusOK, developerPortalTeamsFixture(), http.Header{"csrf": {"csrf"}, "csrf_ts": {"csrf-ts"}}), nil
+				}
+				if calls != 2 || r.Method != http.MethodPost || r.Header.Get("X-HTTP-Method-Override") != http.MethodGet {
+					t.Fatalf("unexpected request %d: %s %s override=%q", calls, r.Method, r.URL, r.Header.Get("X-HTTP-Method-Override"))
+				}
+				return developerPortalTestResponse(http.StatusOK, tc.body, nil), nil
+			})
+			result, err := client.SetDeveloperServiceIDDomains(context.Background(), DeveloperServiceIDDomainsSetRequest{ServiceID: "service-1", Domains: []string{"example.com"}, ReturnURLs: []string{"https://example.com/cb"}})
+			if err == nil || result != nil || calls != 2 {
+				t.Fatalf("result=%+v err=%v calls=%d, want preflight rejection without PATCH", result, err, calls)
+			}
+			if !strings.Contains(err.Error(), "cannot safely update Services ID domains") || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error = %q, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestSetDeveloperServiceIDDomainsAcceptsProvenCapabilityCompleteness(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		meta string
+	}{
+		{"captured placeholder", serviceIDDomainsFixtureMeta},
+		{"exact total with maximum limit", `,"meta":{"paging":{"total":2,"limit":2147483647}}`},
+		{"exact total with requested limit", `,"meta":{"paging":{"total":2,"limit":50}}`},
+		{"exact total without limit", `,"meta":{"paging":{"total":2}}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			preflight := serviceIDDomainsFixtureWithCapabilityMeta(tc.meta)
+			postRead := strings.Replace(preflight, `"value":"old.example.com"`, `"value":"example.com"`, 1)
+			postRead = strings.Replace(postRead, `"value":"https://old.example.com/callback"`, `"value":"https://example.com/cb"`, 1)
+			calls, writes := 0, 0
+			client := developerPortalTestClient(t, func(r *http.Request) (*http.Response, error) {
+				calls++
+				switch {
+				case calls == 1:
+					return developerPortalTestResponse(http.StatusOK, developerPortalTeamsFixture(), http.Header{"csrf": {"csrf"}, "csrf_ts": {"csrf-ts"}}), nil
+				case r.Method == http.MethodPatch:
+					writes++
+					return developerPortalTestResponse(http.StatusOK, `{}`, nil), nil
+				case writes == 0:
+					return developerPortalTestResponse(http.StatusOK, preflight, nil), nil
+				default:
+					return developerPortalTestResponse(http.StatusOK, postRead, nil), nil
+				}
+			})
+			result, err := client.SetDeveloperServiceIDDomains(context.Background(), DeveloperServiceIDDomainsSetRequest{ServiceID: "service-1", Domains: []string{"example.com"}, ReturnURLs: []string{"https://example.com/cb"}})
+			if err != nil || result == nil || !result.Changed || !result.Verified || writes != 1 || calls != 4 {
+				t.Fatalf("result=%+v err=%v writes=%d calls=%d", result, err, writes, calls)
+			}
+		})
+	}
+}
+
+func TestSetDeveloperServiceIDDomainsRejectsUnprovenCapabilityCompletenessAfterMutation(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		meta string
+		want string
+	}{
+		{"missing meta", "", "paging metadata"},
+		{"total absent", `,"meta":{"paging":{"limit":2147483647}}`, "paging total"},
+		{"limit less than count", `,"meta":{"paging":{"total":2,"limit":1}}`, "limit of 1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			preflight := serviceIDDetailCapabilityGraphFixture("Service", false)
+			postRead := strings.Replace(serviceIDDomainsFixtureWithCapabilityMeta(tc.meta), `"value":"old.example.com"`, `"value":"example.com"`, 1)
+			postRead = strings.Replace(postRead, `"value":"https://old.example.com/callback"`, `"value":"https://example.com/cb"`, 1)
+			calls, writes := 0, 0
+			client := developerPortalTestClient(t, func(r *http.Request) (*http.Response, error) {
+				calls++
+				switch {
+				case calls == 1:
+					return developerPortalTestResponse(http.StatusOK, developerPortalTeamsFixture(), http.Header{"csrf": {"csrf"}, "csrf_ts": {"csrf-ts"}}), nil
+				case r.Method == http.MethodPatch:
+					writes++
+					return developerPortalTestResponse(http.StatusOK, `{}`, nil), nil
+				case writes == 0:
+					return developerPortalTestResponse(http.StatusOK, preflight, nil), nil
+				default:
+					return developerPortalTestResponse(http.StatusOK, postRead, nil), nil
+				}
+			})
+			result, err := client.SetDeveloperServiceIDDomains(context.Background(), DeveloperServiceIDDomainsSetRequest{ServiceID: "service-1", Domains: []string{"example.com"}, ReturnURLs: []string{"https://example.com/cb"}})
+			var unverified *DeveloperServiceIDUnverifiedError
+			if !errors.As(err, &unverified) || result != nil || writes != 1 || calls != 4 {
+				t.Fatalf("result=%+v err=%v writes=%d calls=%d", result, err, writes, calls)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error = %q, want %q", err, tc.want)
+			}
+		})
+	}
+}
