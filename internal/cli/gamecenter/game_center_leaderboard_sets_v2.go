@@ -146,7 +146,7 @@ Examples:
 func GameCenterLeaderboardSetsV2GetCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("view", flag.ExitOnError)
 
-	setID := fs.String("id", "", "Game Center leaderboard set ID")
+	setID := shared.BindResourceIDFlag(fs, "id", "gameCenterLeaderboardSets", "Game Center leaderboard set ID")
 	output := shared.BindOutputFlags(fs)
 
 	return &ffcli.Command{
@@ -272,7 +272,7 @@ Examples:
 func GameCenterLeaderboardSetsV2UpdateCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("update", flag.ExitOnError)
 
-	setID := fs.String("id", "", "Game Center leaderboard set ID")
+	setID := shared.BindResourceIDFlag(fs, "id", "gameCenterLeaderboardSets", "Game Center leaderboard set ID")
 	referenceName := fs.String("reference-name", "", "Reference name for the leaderboard set")
 	output := shared.BindOutputFlags(fs)
 
@@ -329,7 +329,7 @@ Examples:
 func GameCenterLeaderboardSetsV2DeleteCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("delete", flag.ExitOnError)
 
-	setID := fs.String("id", "", "Game Center leaderboard set ID")
+	setID := shared.BindResourceIDFlag(fs, "id", "gameCenterLeaderboardSets", "Game Center leaderboard set ID")
 	confirm := fs.Bool("confirm", false, "Confirm deletion")
 	output := shared.BindOutputFlags(fs)
 
@@ -653,7 +653,7 @@ Examples:
 func GameCenterLeaderboardSetVersionsV2GetCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("view", flag.ExitOnError)
 
-	versionID := fs.String("id", "", "Game Center leaderboard set version ID")
+	versionID := shared.BindResourceIDFlag(fs, "id", "gameCenterLeaderboardSetVersions", "Game Center leaderboard set version ID")
 	output := shared.BindOutputFlags(fs)
 
 	return &ffcli.Command{
@@ -840,7 +840,7 @@ Examples:
 func GameCenterLeaderboardSetLocalizationsV2GetCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("view", flag.ExitOnError)
 
-	localizationID := fs.String("id", "", "Game Center leaderboard set localization ID")
+	localizationID := shared.BindResourceIDFlag(fs, "id", "gameCenterLeaderboardSetLocalizations", "Game Center leaderboard set localization ID")
 	output := shared.BindOutputFlags(fs)
 
 	return &ffcli.Command{
@@ -943,7 +943,7 @@ Examples:
 func GameCenterLeaderboardSetLocalizationsV2UpdateCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("update", flag.ExitOnError)
 
-	localizationID := fs.String("id", "", "Game Center leaderboard set localization ID")
+	localizationID := shared.BindResourceIDFlag(fs, "id", "gameCenterLeaderboardSetLocalizations", "Game Center leaderboard set localization ID")
 	name := fs.String("name", "", "Display name for the leaderboard set in this locale")
 	output := shared.BindOutputFlags(fs)
 
@@ -996,7 +996,7 @@ Examples:
 func GameCenterLeaderboardSetLocalizationsV2DeleteCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("delete", flag.ExitOnError)
 
-	localizationID := fs.String("id", "", "Game Center leaderboard set localization ID")
+	localizationID := shared.BindResourceIDFlag(fs, "id", "gameCenterLeaderboardSetLocalizations", "Game Center leaderboard set localization ID")
 	confirm := fs.Bool("confirm", false, "Confirm deletion")
 	output := shared.BindOutputFlags(fs)
 
@@ -1126,7 +1126,7 @@ Examples:
 func GameCenterLeaderboardSetImagesV2GetCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("view", flag.ExitOnError)
 
-	imageID := fs.String("id", "", "Game Center leaderboard set image ID")
+	imageID := shared.BindResourceIDFlag(fs, "id", "gameCenterLeaderboardSetImages", "Game Center leaderboard set image ID")
 	localizationID := shared.BindResourceIDFlag(fs, "localization-id", "gameCenterLeaderboardSetLocalizations", "Game Center leaderboard set localization ID")
 	output := shared.BindOutputFlags(fs)
 
@@ -1183,7 +1183,7 @@ Examples:
 func GameCenterLeaderboardSetImagesV2DeleteCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("delete", flag.ExitOnError)
 
-	imageID := fs.String("id", "", "Game Center leaderboard set image ID")
+	imageID := shared.BindResourceIDFlag(fs, "id", "gameCenterLeaderboardSetImages", "Game Center leaderboard set image ID")
 	confirm := fs.Bool("confirm", false, "Confirm deletion")
 	output := shared.BindOutputFlags(fs)
 

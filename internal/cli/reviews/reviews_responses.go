@@ -94,7 +94,7 @@ Examples:
 func ReviewsResponseGetCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("view", flag.ExitOnError)
 
-	responseID := fs.String("id", "", "Customer review response ID (required)")
+	responseID := shared.BindResourceIDFlag(fs, "id", "customerReviewResponses", "Customer review response ID (required)")
 	output := shared.BindOutputFlags(fs)
 
 	return &ffcli.Command{
@@ -136,7 +136,7 @@ Examples:
 func ReviewsResponseDeleteCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("delete", flag.ExitOnError)
 
-	responseID := fs.String("id", "", "Customer review response ID (required)")
+	responseID := shared.BindResourceIDFlag(fs, "id", "customerReviewResponses", "Customer review response ID (required)")
 	confirm := fs.Bool("confirm", false, "Confirm deletion")
 	output := shared.BindOutputFlags(fs)
 

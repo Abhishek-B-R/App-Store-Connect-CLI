@@ -187,7 +187,7 @@ func SubscriptionsVersionLocalizationsLinksCommand() *ffcli.Command {
 // SubscriptionsVersionLocalizationsViewCommand views a v2 localization.
 func SubscriptionsVersionLocalizationsViewCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("versions localizations view", flag.ExitOnError)
-	id := fs.String("id", "", "Subscription localization ID")
+	id := shared.BindResourceIDFlag(fs, "id", "subscriptionLocalizations", "Subscription localization ID")
 	fields := fs.String("fields", "", "Sparse fields for subscriptionLocalizations")
 	versionFields := fs.String("version-fields", "", "Sparse fields for included subscriptionVersions")
 	include := fs.String("include", "", "Include relationships: version")
@@ -287,7 +287,7 @@ func SubscriptionsVersionLocalizationsCreateCommand() *ffcli.Command {
 // SubscriptionsVersionLocalizationsUpdateCommand updates a v2 localization.
 func SubscriptionsVersionLocalizationsUpdateCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("versions localizations update", flag.ExitOnError)
-	id := fs.String("id", "", "Subscription localization ID")
+	id := shared.BindResourceIDFlag(fs, "id", "subscriptionLocalizations", "Subscription localization ID")
 	var name, description optionalString
 	fs.Var(&name, "name", "Localized display name (may be empty)")
 	fs.Var(&description, "description", "Localized description (may be empty)")
@@ -348,7 +348,7 @@ Examples:
 // SubscriptionsVersionLocalizationsDeleteCommand deletes a v2 localization.
 func SubscriptionsVersionLocalizationsDeleteCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("versions localizations delete", flag.ExitOnError)
-	id := fs.String("id", "", "Subscription localization ID")
+	id := shared.BindResourceIDFlag(fs, "id", "subscriptionLocalizations", "Subscription localization ID")
 	confirm := fs.Bool("confirm", false, "Confirm deletion")
 	output := shared.BindOutputFlags(fs)
 	return &ffcli.Command{

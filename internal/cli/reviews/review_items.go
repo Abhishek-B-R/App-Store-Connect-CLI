@@ -78,7 +78,7 @@ func ReviewItemsListCommand() *ffcli.Command {
 func reviewItemsListCommand(name, errorPrefix, shortUsage, examples string) *ffcli.Command {
 	fs := flag.NewFlagSet(name, flag.ExitOnError)
 
-	submissionID := fs.String("submission", "", "Review submission ID (required)")
+	submissionID := shared.BindResourceIDFlag(fs, "submission", "reviewSubmissions", "Review submission ID (required)")
 	limit := fs.Int("limit", 0, "Maximum results per page (1-200)")
 	next := fs.String("next", "", "Next page URL from a previous response")
 	fields := fs.String("fields", "", "Review item fields: "+strings.Join(reviewSubmissionItemFields, ", "))
@@ -259,7 +259,7 @@ func ReviewItemsAddCommand() *ffcli.Command {
 func reviewItemsAddCommand(name, errorPrefix, shortUsage, examples string) *ffcli.Command {
 	fs := flag.NewFlagSet(name, flag.ExitOnError)
 
-	submissionID := fs.String("submission", "", "Review submission ID (required)")
+	submissionID := shared.BindResourceIDFlag(fs, "submission", "reviewSubmissions", "Review submission ID (required)")
 	itemTypeValues := strings.Join(reviewSubmissionItemTypeList(), ", ")
 	itemType := fs.String("item-type", "", fmt.Sprintf("Item type: %s (required)", itemTypeValues))
 	itemID := fs.String("item-id", "", "Item ID (required)")
@@ -350,7 +350,7 @@ func ReviewItemsUpdateCommand() *ffcli.Command {
 func reviewItemsUpdateCommand(name, errorPrefix, shortUsage, examples string) *ffcli.Command {
 	fs := flag.NewFlagSet(name, flag.ExitOnError)
 
-	itemID := fs.String("id", "", "Review submission item ID (required)")
+	itemID := shared.BindResourceIDFlag(fs, "id", "reviewSubmissionItems", "Review submission item ID (required)")
 	resolved := fs.String("resolved", "", "Whether the item is resolved: true or false")
 	removed := fs.String("removed", "", "Whether the item is removed: true or false")
 	clearResolved := fs.Bool("clear-resolved", false, "Set resolved to JSON null")
@@ -465,7 +465,7 @@ func ReviewItemsRemoveCommand() *ffcli.Command {
 func reviewItemsRemoveCommand(name, errorPrefix, shortUsage, examples string) *ffcli.Command {
 	fs := flag.NewFlagSet(name, flag.ExitOnError)
 
-	itemID := fs.String("id", "", "Review submission item ID (required)")
+	itemID := shared.BindResourceIDFlag(fs, "id", "reviewSubmissionItems", "Review submission item ID (required)")
 	confirm := fs.Bool("confirm", false, "Confirm removal (required)")
 	output := shared.BindOutputFlags(fs)
 

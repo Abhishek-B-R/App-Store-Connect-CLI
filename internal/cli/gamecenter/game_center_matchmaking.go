@@ -151,7 +151,7 @@ Examples:
 func GameCenterMatchmakingQueuesGetCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("view", flag.ExitOnError)
 
-	queueID := fs.String("id", "", "Matchmaking queue ID")
+	queueID := shared.BindResourceIDFlag(fs, "id", "gameCenterMatchmakingQueues", "Matchmaking queue ID")
 	output := shared.BindOutputFlags(fs)
 
 	return &ffcli.Command{
@@ -249,7 +249,7 @@ Examples:
 func GameCenterMatchmakingQueuesUpdateCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("update", flag.ExitOnError)
 
-	queueID := fs.String("id", "", "Matchmaking queue ID")
+	queueID := shared.BindResourceIDFlag(fs, "id", "gameCenterMatchmakingQueues", "Matchmaking queue ID")
 	ruleSetID := shared.BindResourceIDFlag(fs, "rule-set-id", "gameCenterMatchmakingRuleSets", "Matchmaking rule set ID")
 	experimentRuleSetID := shared.BindResourceIDFlag(fs, "experiment-rule-set-id", "gameCenterMatchmakingRuleSets", "Experiment rule set ID")
 	classicBundleIDs := shared.BindOnceCSVFlag(fs, "classic-bundle-ids", "Comma-separated bundle IDs for classic matchmaking")
@@ -307,7 +307,7 @@ Examples:
 func GameCenterMatchmakingQueuesDeleteCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("delete", flag.ExitOnError)
 
-	queueID := fs.String("id", "", "Matchmaking queue ID")
+	queueID := shared.BindResourceIDFlag(fs, "id", "gameCenterMatchmakingQueues", "Matchmaking queue ID")
 	confirm := fs.Bool("confirm", false, "Confirm deletion")
 	output := shared.BindOutputFlags(fs)
 
@@ -460,7 +460,7 @@ Examples:
 func GameCenterMatchmakingRuleSetsGetCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("view", flag.ExitOnError)
 
-	ruleSetID := fs.String("id", "", "Matchmaking rule set ID")
+	ruleSetID := shared.BindResourceIDFlag(fs, "id", "gameCenterMatchmakingRuleSets", "Matchmaking rule set ID")
 	output := shared.BindOutputFlags(fs)
 
 	return &ffcli.Command{
@@ -562,7 +562,7 @@ Examples:
 func GameCenterMatchmakingRuleSetsUpdateCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("update", flag.ExitOnError)
 
-	ruleSetID := fs.String("id", "", "Matchmaking rule set ID")
+	ruleSetID := shared.BindResourceIDFlag(fs, "id", "gameCenterMatchmakingRuleSets", "Matchmaking rule set ID")
 	minPlayers := fs.Int("min-players", 0, "Minimum players")
 	maxPlayers := fs.Int("max-players", 0, "Maximum players")
 	output := shared.BindOutputFlags(fs)
@@ -626,7 +626,7 @@ Examples:
 func GameCenterMatchmakingRuleSetsDeleteCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("delete", flag.ExitOnError)
 
-	ruleSetID := fs.String("id", "", "Matchmaking rule set ID")
+	ruleSetID := shared.BindResourceIDFlag(fs, "id", "gameCenterMatchmakingRuleSets", "Matchmaking rule set ID")
 	confirm := fs.Bool("confirm", false, "Confirm deletion")
 	output := shared.BindOutputFlags(fs)
 
@@ -963,7 +963,7 @@ Examples:
 func GameCenterMatchmakingRulesUpdateCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("update", flag.ExitOnError)
 
-	ruleID := fs.String("id", "", "Matchmaking rule ID")
+	ruleID := shared.BindResourceIDFlag(fs, "id", "gameCenterMatchmakingRules", "Matchmaking rule ID")
 	description := fs.String("description", "", "Rule description")
 	expression := fs.String("expression", "", "Rule expression")
 	weight := fs.String("weight", "", "Rule weight (finite number)")
@@ -1047,7 +1047,7 @@ func parseMatchmakingRuleWeight(value string) (float64, error) {
 func GameCenterMatchmakingRulesDeleteCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("delete", flag.ExitOnError)
 
-	ruleID := fs.String("id", "", "Matchmaking rule ID")
+	ruleID := shared.BindResourceIDFlag(fs, "id", "gameCenterMatchmakingRules", "Matchmaking rule ID")
 	confirm := fs.Bool("confirm", false, "Confirm deletion")
 	output := shared.BindOutputFlags(fs)
 
@@ -1263,7 +1263,7 @@ Examples:
 func GameCenterMatchmakingTeamsUpdateCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("update", flag.ExitOnError)
 
-	teamID := fs.String("id", "", "Matchmaking team ID")
+	teamID := shared.BindResourceIDFlag(fs, "id", "gameCenterMatchmakingTeams", "Matchmaking team ID")
 	minPlayers := fs.Int("min-players", 0, "Minimum players")
 	maxPlayers := fs.Int("max-players", 0, "Maximum players")
 	output := shared.BindOutputFlags(fs)
@@ -1325,7 +1325,7 @@ Examples:
 func GameCenterMatchmakingTeamsDeleteCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("delete", flag.ExitOnError)
 
-	teamID := fs.String("id", "", "Matchmaking team ID")
+	teamID := shared.BindResourceIDFlag(fs, "id", "gameCenterMatchmakingTeams", "Matchmaking team ID")
 	confirm := fs.Bool("confirm", false, "Confirm deletion")
 	output := shared.BindOutputFlags(fs)
 
@@ -1429,7 +1429,7 @@ func GameCenterMatchmakingQueueRequestsCommand() *ffcli.Command {
 	granularity := fs.String("granularity", "", "Granularity (P1D, PT1H, PT15M)")
 	groupBy := fs.String("group-by", "", "Group by (comma-separated: result, gameCenterDetail)")
 	filterResult := fs.String("filter-result", "", "Filter result (MATCHED, CANCELED, EXPIRED)")
-	filterDetail := fs.String("filter-detail", "", "Filter by Game Center detail ID")
+	filterDetail := shared.BindResourceIDFlag(fs, "filter-detail", "gameCenterDetails", "Filter by Game Center detail ID")
 	sort := fs.String("sort", "", "Sort fields (comma-separated)")
 	limit := fs.Int("limit", 0, "Maximum groups per page (1-200)")
 	next := fs.String("next", "", "Fetch next page using a links.next URL")
@@ -1483,7 +1483,7 @@ func GameCenterMatchmakingQueueExperimentRequestsCommand() *ffcli.Command {
 	granularity := fs.String("granularity", "", "Granularity (P1D, PT1H, PT15M)")
 	groupBy := fs.String("group-by", "", "Group by (comma-separated: result, gameCenterDetail)")
 	filterResult := fs.String("filter-result", "", "Filter result (MATCHED, CANCELED, EXPIRED)")
-	filterDetail := fs.String("filter-detail", "", "Filter by Game Center detail ID")
+	filterDetail := shared.BindResourceIDFlag(fs, "filter-detail", "gameCenterDetails", "Filter by Game Center detail ID")
 	sort := fs.String("sort", "", "Sort fields (comma-separated)")
 	limit := fs.Int("limit", 0, "Maximum groups per page (1-200)")
 	next := fs.String("next", "", "Fetch next page using a links.next URL")
@@ -1522,7 +1522,7 @@ func GameCenterMatchmakingBooleanRuleResultsCommand() *ffcli.Command {
 	granularity := fs.String("granularity", "", "Granularity (P1D, PT1H, PT15M)")
 	groupBy := fs.String("group-by", "", "Group by (comma-separated: result, gameCenterMatchmakingQueue)")
 	filterResult := fs.String("filter-result", "", "Filter result")
-	filterQueue := fs.String("filter-queue", "", "Filter by matchmaking queue ID")
+	filterQueue := shared.BindResourceIDFlag(fs, "filter-queue", "gameCenterMatchmakingQueues", "Filter by matchmaking queue ID")
 	sort := fs.String("sort", "", "Sort fields (comma-separated)")
 	limit := fs.Int("limit", 0, "Maximum groups per page (1-200)")
 	next := fs.String("next", "", "Fetch next page using a links.next URL")
@@ -1542,7 +1542,7 @@ func GameCenterMatchmakingNumberRuleResultsCommand() *ffcli.Command {
 	granularity := fs.String("granularity", "", "Granularity (P1D, PT1H, PT15M)")
 	groupBy := fs.String("group-by", "", "Group by (comma-separated: gameCenterMatchmakingQueue)")
 	filterResult := fs.String("filter-result", "", "Filter result (supported only by rule-boolean-results)")
-	filterQueue := fs.String("filter-queue", "", "Filter by matchmaking queue ID")
+	filterQueue := shared.BindResourceIDFlag(fs, "filter-queue", "gameCenterMatchmakingQueues", "Filter by matchmaking queue ID")
 	sort := fs.String("sort", "", "Sort fields (comma-separated)")
 	limit := fs.Int("limit", 0, "Maximum groups per page (1-200)")
 	next := fs.String("next", "", "Fetch next page using a links.next URL")
@@ -1562,7 +1562,7 @@ func GameCenterMatchmakingRuleErrorsCommand() *ffcli.Command {
 	granularity := fs.String("granularity", "", "Granularity (P1D, PT1H, PT15M)")
 	groupBy := fs.String("group-by", "", "Group by (comma-separated: gameCenterMatchmakingQueue)")
 	filterResult := fs.String("filter-result", "", "Filter result (supported only by rule-boolean-results)")
-	filterQueue := fs.String("filter-queue", "", "Filter by matchmaking queue ID")
+	filterQueue := shared.BindResourceIDFlag(fs, "filter-queue", "gameCenterMatchmakingQueues", "Filter by matchmaking queue ID")
 	sort := fs.String("sort", "", "Sort fields (comma-separated)")
 	limit := fs.Int("limit", 0, "Maximum groups per page (1-200)")
 	next := fs.String("next", "", "Fetch next page using a links.next URL")

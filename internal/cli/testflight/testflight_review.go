@@ -115,7 +115,7 @@ Examples:
 func TestFlightReviewUpdateCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("update", flag.ExitOnError)
 
-	id := fs.String("id", "", "Beta app review detail ID")
+	id := shared.BindResourceIDFlag(fs, "id", "betaAppReviewDetails", "Beta app review detail ID")
 	contactFirstName := fs.String("contact-first-name", "", "Contact first name")
 	contactLastName := fs.String("contact-last-name", "", "Contact last name")
 	contactEmail := fs.String("contact-email", "", "Contact email")
@@ -292,7 +292,7 @@ Examples:
 func TestFlightReviewAppGetCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("app view", flag.ExitOnError)
 
-	id := fs.String("id", "", "Beta app review detail ID")
+	id := shared.BindResourceIDFlag(fs, "id", "betaAppReviewDetails", "Beta app review detail ID")
 	output := shared.BindOutputFlags(fs)
 
 	return &ffcli.Command{
@@ -442,7 +442,7 @@ Examples:
 func TestFlightReviewSubmissionsGetCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("submissions view", flag.ExitOnError)
 
-	id := fs.String("id", "", "Beta app review submission ID")
+	id := shared.BindResourceIDFlag(fs, "id", "betaAppReviewSubmissions", "Beta app review submission ID")
 	output := shared.BindOutputFlags(fs)
 
 	return &ffcli.Command{
@@ -484,7 +484,7 @@ Examples:
 func TestFlightReviewSubmissionsBuildCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("submissions build", flag.ExitOnError)
 
-	id := fs.String("id", "", "Beta app review submission ID")
+	id := shared.BindResourceIDFlag(fs, "id", "betaAppReviewSubmissions", "Beta app review submission ID")
 	output := shared.BindOutputFlags(fs)
 
 	return &ffcli.Command{
@@ -639,7 +639,7 @@ Examples:
 func TestFlightBetaDetailsBuildGetCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("build view", flag.ExitOnError)
 
-	id := fs.String("id", "", "Build beta detail ID")
+	id := shared.BindResourceIDFlag(fs, "id", "buildBetaDetails", "Build beta detail ID")
 	output := shared.BindOutputFlags(fs)
 
 	return &ffcli.Command{
@@ -681,7 +681,7 @@ Examples:
 func TestFlightBetaDetailsUpdateCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("update", flag.ExitOnError)
 
-	id := fs.String("id", "", "Build beta detail ID")
+	id := shared.BindResourceIDFlag(fs, "id", "buildBetaDetails", "Build beta detail ID")
 	autoNotify := fs.Bool("auto-notify", false, "Enable auto-notify for external testers")
 	output := shared.BindOutputFlags(fs)
 
@@ -770,7 +770,7 @@ Examples:
 func TestFlightRecruitmentDeleteCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("delete", flag.ExitOnError)
 
-	id := fs.String("id", "", "Recruitment criteria ID")
+	id := shared.BindResourceIDFlag(fs, "id", "betaRecruitmentCriteria", "Recruitment criteria ID")
 	confirm := fs.Bool("confirm", false, "Confirm deletion")
 	output := shared.BindOutputFlags(fs)
 
@@ -881,7 +881,7 @@ Examples:
 func TestFlightRecruitmentSetCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("set", flag.ExitOnError)
 
-	groupID := fs.String("group", "", "Beta group ID")
+	groupID := shared.BindResourceIDFlag(fs, "group", "betaGroups", "Beta group ID")
 	filters := fs.String("os-version-filter", "", "Device family OS filters (e.g., IPHONE=26,IPAD=26)")
 	output := shared.BindOutputFlags(fs)
 
@@ -1086,7 +1086,7 @@ Examples:
 func TestFlightMetricsPublicLinkCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("public-link", flag.ExitOnError)
 
-	groupID := fs.String("group", "", "Beta group ID")
+	groupID := shared.BindResourceIDFlag(fs, "group", "betaGroups", "Beta group ID")
 	output := shared.BindOutputFlags(fs)
 
 	return &ffcli.Command{
@@ -1128,7 +1128,7 @@ Examples:
 func TestFlightMetricsTestersCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("testers", flag.ExitOnError)
 
-	groupID := fs.String("group", "", "Beta group ID")
+	groupID := shared.BindResourceIDFlag(fs, "group", "betaGroups", "Beta group ID")
 	output := shared.BindOutputFlags(fs)
 
 	return &ffcli.Command{

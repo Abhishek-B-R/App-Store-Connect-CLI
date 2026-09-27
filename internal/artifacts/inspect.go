@@ -8,6 +8,7 @@ import (
 	"encoding/xml"
 	"fmt"
 	"io"
+	"path"
 	"strings"
 	"time"
 
@@ -22,6 +23,10 @@ const (
 	maxPlistBytes       = 4 << 20
 	maxXarTOCBytes      = 8 << 20
 	maxXarFileBytes     = 4 << 20
+
+	maxCompressedExecutableScanBytes = 1 << 30
+	minCompressionRatioCheckBytes    = 16 << 20
+	maxExecutableCompressionRatio    = 64
 )
 
 // IPAManifest is the offline manifest for an IPA.
@@ -38,6 +43,11 @@ type IPAManifest struct {
 	NestedBundles    []NestedBundle
 	Entitlements     map[string]any
 	Profile          *ProfileSummary
+	// CodeSignature classifies the main executable's embedded signature. It is
+	// empty when inspection stopped before the executable was read.
+	CodeSignature      string
+	CodeSignatureError string
+	Signer             *SignerIdentity
 }
 
 // NestedBundle is an extension or App Clip inside the IPA.
@@ -62,11 +72,17 @@ type PKGManifest struct {
 	InstallLocation  string
 	BundleIDs        []string
 	SignerCommonName string
+	TeamID           string
 	Status           string
+	// PackageSignature classifies the xar signature in the table of contents.
+	PackageSignature      string
+	PackageSignatureError string
+	Signer                *SignerIdentity
 }
 
 type bundlePlist struct {
 	BundleID         string   `plist:"CFBundleIdentifier"`
+	Executable       string   `plist:"CFBundleExecutable"`
 	DisplayName      string   `plist:"CFBundleDisplayName"`
 	Name             string   `plist:"CFBundleName"`
 	Version          string   `plist:"CFBundleShortVersionString"`
@@ -78,7 +94,8 @@ type bundlePlist struct {
 }
 
 // InspectIPA reads a bounded IPA zip and returns a metadata manifest. A missing
-// embedded profile is reported as unsigned; code signatures are not verified.
+// embedded profile is reported as unsigned. The main executable's signer
+// identity is read from its code signature, which is not verified.
 func InspectIPA(source io.ReaderAt, size int64, includeEntitlements, includeProfile bool) (IPAManifest, error) {
 	if err := validateZIPDirectory(source, size); err != nil {
 		return IPAManifest{Status: "unreadable"}, fmt.Errorf("open IPA: %w", err)
@@ -133,6 +150,7 @@ func InspectIPA(source io.ReaderAt, size int64, includeEntitlements, includeProf
 		return IPAManifest{Status: "unreadable"}, err
 	}
 	manifest := manifestFromPlist(mainPlist)
+	executable, executableErr := mainExecutableMember(reader.File, appRoot, mainPlist.Executable)
 	for _, file := range nested {
 		path := zipMemberName(file.Name)
 		if !strings.HasPrefix(path, appRoot) {
@@ -148,6 +166,17 @@ func InspectIPA(source io.ReaderAt, size int64, includeEntitlements, includeProf
 			Name:     firstNonEmpty(parsed.DisplayName, parsed.Name),
 			Path:     path,
 		})
+	}
+	if executableErr == nil {
+		manifest.CodeSignature, manifest.Signer, executableErr = readExecutableSignature(source, executable)
+	}
+	if executableErr != nil {
+		manifest.CodeSignature, manifest.Signer = SignatureUnreadable, nil
+		manifest.CodeSignatureError = executableErr.Error()
+	}
+	if manifest.Signer != nil {
+		manifest.SignerCommonName = manifest.Signer.CommonName
+		manifest.TeamID = manifest.Signer.TeamID
 	}
 	if profile != nil {
 		summary, entitlements, err := readEmbeddedProfile(profile)
@@ -172,6 +201,62 @@ func InspectIPA(source io.ReaderAt, size int64, includeEntitlements, includeProf
 		manifest.Status = "unsigned"
 	}
 	return manifest, nil
+}
+
+// mainExecutableMember finds CFBundleExecutable inside the selected app. Xcode
+// names the executable after the bundle when the key is absent.
+func mainExecutableMember(files []*zip.File, appRoot, name string) (*zip.File, error) {
+	if name == "" {
+		name = strings.TrimSuffix(path.Base(strings.TrimSuffix(appRoot, "/")), ".app")
+	}
+	if name == "" || name == "." || name == ".." || strings.ContainsAny(name, "/\\") {
+		return nil, fmt.Errorf("CFBundleExecutable %q is not a file name in the app bundle", name)
+	}
+	var found *zip.File
+	for _, file := range files {
+		if zipMemberName(file.Name) != appRoot+name || file.FileInfo().IsDir() {
+			continue
+		}
+		if found != nil {
+			return nil, fmt.Errorf("IPA has duplicate main executable entries")
+		}
+		found = file
+	}
+	if found == nil {
+		return nil, fmt.Errorf("IPA has no main executable %q", name)
+	}
+	return found, nil
+}
+
+func readExecutableSignature(source io.ReaderAt, file *zip.File) (string, *SignerIdentity, error) {
+	size := int64(file.UncompressedSize64)
+	if file.Method == zip.Store && file.CompressedSize64 == file.UncompressedSize64 {
+		// Stored members are addressable, so skipping code pages costs no reads.
+		if offset, err := file.DataOffset(); err == nil {
+			return readMachOSignature(io.NewSectionReader(source, offset, size), size)
+		}
+	}
+	if err := compressedExecutableScanError(file.CompressedSize64, file.UncompressedSize64); err != nil {
+		return SignatureUnreadable, nil, err
+	}
+	reader, err := file.Open()
+	if err != nil {
+		return SignatureUnreadable, nil, fmt.Errorf("open main executable: %w", err)
+	}
+	defer reader.Close()
+	return readMachOSignature(reader, size)
+}
+
+// A compressed executable must be inflated up to its code signature near the
+// end. Bound that work, and refuse ratios real Mach-O code does not reach.
+func compressedExecutableScanError(compressed, uncompressed uint64) error {
+	if uncompressed > maxCompressedExecutableScanBytes {
+		return fmt.Errorf("compressed main executable exceeds the %d byte scan limit", uint64(maxCompressedExecutableScanBytes))
+	}
+	if uncompressed > minCompressionRatioCheckBytes && uncompressed/max(compressed, 1) > maxExecutableCompressionRatio {
+		return fmt.Errorf("compressed main executable exceeds the scan limit's compression ratio")
+	}
+	return nil
 }
 
 func manifestFromPlist(parsed bundlePlist) IPAManifest {
@@ -333,23 +418,47 @@ func stringValue(value any) string {
 	return text
 }
 
-// InspectPKG reads PackageInfo from a flat xar component package.
+// InspectPKG reads PackageInfo from a flat xar component package. The signer
+// identity is read from the package signature certificates, which are not
+// verified.
 func InspectPKG(source io.ReaderAt, size int64) (PKGManifest, error) {
-	files, err := readXarFiles(source, size)
-	if err != nil {
+	document, files, err := readXarFiles(source, size)
+	if document == nil {
 		return PKGManifest{Status: "unreadable"}, err
+	}
+	// The signature lives in the table of contents, so report it even when the
+	// package metadata cannot be read, such as for a product archive.
+	signature := PKGManifest{}
+	var signatureErr error
+	signature.PackageSignature, signature.Signer, signatureErr = xarSigner(document.Signature, document.XSignature)
+	if signatureErr != nil {
+		signature.PackageSignatureError = signatureErr.Error()
+	}
+	if signature.Signer != nil {
+		signature.SignerCommonName = signature.Signer.CommonName
+		signature.TeamID = signature.Signer.TeamID
+	}
+	withSignature := func(manifest PKGManifest, status string) PKGManifest {
+		manifest.Status = status
+		manifest.SignerCommonName = signature.SignerCommonName
+		manifest.TeamID = signature.TeamID
+		manifest.PackageSignature = signature.PackageSignature
+		manifest.PackageSignatureError = signature.PackageSignatureError
+		manifest.Signer = signature.Signer
+		return manifest
+	}
+	if err != nil {
+		return withSignature(PKGManifest{}, "unreadable"), err
 	}
 	info, ok := files["PackageInfo"]
 	if !ok {
-		return PKGManifest{Status: "unreadable"}, fmt.Errorf("flat pkg has no PackageInfo")
+		return withSignature(PKGManifest{}, "unreadable"), fmt.Errorf("flat pkg has no PackageInfo")
 	}
 	manifest, err := parsePackageInfo(info)
 	if err != nil {
-		manifest.Status = "unreadable"
-		return manifest, err
+		return withSignature(manifest, "unreadable"), err
 	}
-	manifest.Status = "readable"
-	return manifest, nil
+	return withSignature(manifest, "readable"), nil
 }
 
 type packageInfoXML struct {
@@ -383,48 +492,64 @@ func parsePackageInfo(data []byte) (PKGManifest, error) {
 	}, nil
 }
 
-func readXarFiles(source io.ReaderAt, size int64) (map[string][]byte, error) {
+// readXarFiles returns the decoded table of contents whenever it could be read,
+// even if reading a member fails.
+func readXarFiles(source io.ReaderAt, size int64) (*xarDocument, map[string][]byte, error) {
+	toc, heapStart, err := readXarTOC(source, size)
+	if err != nil {
+		return nil, nil, err
+	}
+	document, err := decodeXarTOC(toc)
+	if err != nil {
+		return nil, nil, err
+	}
+	files, err := xarFilesFromDocument(document, io.NewSectionReader(source, heapStart, size-heapStart), size-heapStart)
+	return &document, files, err
+}
+
+func readXarTOC(source io.ReaderAt, size int64) ([]byte, int64, error) {
 	data := make([]byte, 28)
 	if size < 28 {
-		return nil, fmt.Errorf("not a flat xar package")
+		return nil, 0, fmt.Errorf("not a flat xar package")
 	}
 	if _, err := source.ReadAt(data, 0); err != nil {
-		return nil, fmt.Errorf("read xar header: %w", err)
+		return nil, 0, fmt.Errorf("read xar header: %w", err)
 	}
 	if string(data[:4]) != "xar!" {
-		return nil, fmt.Errorf("not a flat xar package")
+		return nil, 0, fmt.Errorf("not a flat xar package")
 	}
 	headerSize := int64(binary.BigEndian.Uint16(data[4:6]))
 	if headerSize < 28 || headerSize > size {
-		return nil, fmt.Errorf("invalid xar header size")
+		return nil, 0, fmt.Errorf("invalid xar header size")
 	}
 	tocCompressed := binary.BigEndian.Uint64(data[8:16])
 	tocUncompressed := binary.BigEndian.Uint64(data[16:24])
 	if tocCompressed > maxXarTOCBytes || tocUncompressed > maxXarTOCBytes {
-		return nil, fmt.Errorf("xar table of contents exceeds the limit")
+		return nil, 0, fmt.Errorf("xar table of contents exceeds the limit")
 	}
 	if int64(tocCompressed) > size-headerSize {
-		return nil, fmt.Errorf("xar table of contents is truncated")
+		return nil, 0, fmt.Errorf("xar table of contents is truncated")
 	}
 	tocReader, err := zlib.NewReader(io.NewSectionReader(source, headerSize, int64(tocCompressed)))
 	if err != nil {
-		return nil, fmt.Errorf("open xar table of contents: %w", err)
+		return nil, 0, fmt.Errorf("open xar table of contents: %w", err)
 	}
 	defer tocReader.Close()
 	toc, err := io.ReadAll(io.LimitReader(tocReader, int64(tocUncompressed)+1))
 	if err != nil {
-		return nil, fmt.Errorf("read xar table of contents: %w", err)
+		return nil, 0, fmt.Errorf("read xar table of contents: %w", err)
 	}
 	if uint64(len(toc)) > tocUncompressed {
-		return nil, fmt.Errorf("xar table of contents exceeds the declared size")
+		return nil, 0, fmt.Errorf("xar table of contents exceeds the declared size")
 	}
-	tocEnd := headerSize + int64(tocCompressed)
-	return xarFilesFromTOC(toc, io.NewSectionReader(source, tocEnd, size-tocEnd), size-tocEnd)
+	return toc, headerSize + int64(tocCompressed), nil
 }
 
 type xarDocument struct {
-	XMLName xml.Name  `xml:"xar"`
-	Files   []xarFile `xml:"toc>file"`
+	XMLName    xml.Name      `xml:"xar"`
+	Files      []xarFile     `xml:"toc>file"`
+	Signature  *xarSignature `xml:"toc>signature"`
+	XSignature *xarSignature `xml:"toc>x-signature"`
 }
 
 type xarFile struct {
@@ -444,11 +569,23 @@ type xarEncoding struct {
 	Style string `xml:"style,attr"`
 }
 
-func xarFilesFromTOC(toc []byte, heap io.ReaderAt, heapSize int64) (map[string][]byte, error) {
+func decodeXarTOC(toc []byte) (xarDocument, error) {
 	var document xarDocument
 	if err := xml.Unmarshal(toc, &document); err != nil {
-		return nil, fmt.Errorf("decode xar table of contents: %w", err)
+		return xarDocument{}, fmt.Errorf("decode xar table of contents: %w", err)
 	}
+	return document, nil
+}
+
+func xarFilesFromTOC(toc []byte, heap io.ReaderAt, heapSize int64) (map[string][]byte, error) {
+	document, err := decodeXarTOC(toc)
+	if err != nil {
+		return nil, err
+	}
+	return xarFilesFromDocument(document, heap, heapSize)
+}
+
+func xarFilesFromDocument(document xarDocument, heap io.ReaderAt, heapSize int64) (map[string][]byte, error) {
 	files := make(map[string][]byte, 1)
 	for _, file := range document.Files {
 		if file.Type != "file" || file.Name != "PackageInfo" {
