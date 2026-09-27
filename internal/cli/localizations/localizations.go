@@ -60,7 +60,7 @@ func LocalizationsListCommand() *ffcli.Command {
 
 	versionID := shared.BindResourceIDFlag(fs, "version", "appStoreVersions", "App Store version ID, or a version string such as 1.2.3 with --app; defaults to the --app's active editable version, then a developer-removed version, else its live version")
 	appID := fs.String("app", "", "App Store Connect app ID (or ASC_APP_ID env)")
-	appInfoID := fs.String("app-info", "", "App Info ID (optional override)")
+	appInfoID := shared.BindResourceIDFlag(fs, "app-info", "appInfos", "App Info ID (optional override)")
 	platform := fs.String("platform", "", "Platform used to pick the version when --version is omitted or is a version string with --app: IOS, MAC_OS, TV_OS, or VISION_OS")
 	locType := fs.String("type", shared.LocalizationTypeVersion, "Localization type: version (default) or app-info")
 	appInfoFields := fs.String("app-info-fields", "", "Sparse app info fields for app-info localizations: kidsAgeBand (deprecated; removed from API 4.5; prefer age-rating data)")
@@ -390,7 +390,7 @@ func LocalizationsDownloadCommand() *ffcli.Command {
 
 	versionID := shared.BindResourceIDFlag(fs, "version", "appStoreVersions", "App Store version ID")
 	appID := fs.String("app", "", "App Store Connect app ID (or ASC_APP_ID env)")
-	appInfoID := fs.String("app-info", "", "App Info ID (optional override)")
+	appInfoID := shared.BindResourceIDFlag(fs, "app-info", "appInfos", "App Info ID (optional override)")
 	locType := fs.String("type", shared.LocalizationTypeVersion, "Localization type: version (default) or app-info")
 	locale := fs.String("locale", "", "Filter by locale(s), comma-separated")
 	path := fs.String("path", "localizations", "Output path (directory or .strings file)")
@@ -596,7 +596,7 @@ func LocalizationsUploadCommand() *ffcli.Command {
 
 	versionID := shared.BindResourceIDFlag(fs, "version", "appStoreVersions", "App Store version ID")
 	appID := fs.String("app", "", "App Store Connect app ID (or ASC_APP_ID env)")
-	appInfoID := fs.String("app-info", "", "App Info ID (optional override)")
+	appInfoID := shared.BindResourceIDFlag(fs, "app-info", "appInfos", "App Info ID (optional override)")
 	locType := fs.String("type", shared.LocalizationTypeVersion, "Localization type: version (default) or app-info")
 	locale := fs.String("locale", "", "Filter by locale(s), comma-separated")
 	path := fs.String("path", "", "Input path (directory or .strings file)")

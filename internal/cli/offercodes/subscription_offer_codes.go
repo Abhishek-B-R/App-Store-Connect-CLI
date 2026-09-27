@@ -118,6 +118,7 @@ Examples:
   asc offer-codes view --offer-code-id "OFFER_CODE_ID"`,
 		IDFlag:      "offer-code-id",
 		IDUsage:     "Subscription offer code ID (required)",
+		IDType:      "subscriptionOfferCodes",
 		ErrorPrefix: "offer-codes view",
 		Fetch: func(ctx context.Context, client *asc.Client, id string) (any, error) {
 			return client.GetSubscriptionOfferCode(ctx, id)
@@ -278,6 +279,7 @@ Examples:
   asc offer-codes update --offer-code-id "OFFER_CODE_ID" --active true`,
 		IDFlag:      "offer-code-id",
 		IDUsage:     "Subscription offer code ID (required)",
+		IDType:      "subscriptionOfferCodes",
 		ErrorPrefix: "offer-codes update",
 		Update: func(ctx context.Context, client *asc.Client, id string, active *bool) (any, error) {
 			return client.UpdateSubscriptionOfferCode(ctx, id, asc.SubscriptionOfferCodeUpdateAttributes{Active: active})

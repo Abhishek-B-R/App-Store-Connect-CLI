@@ -93,7 +93,7 @@ Examples:
 func GameCenterLeaderboardSetImagesDeleteCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("delete", flag.ExitOnError)
 
-	imageID := fs.String("id", "", "Leaderboard set image ID")
+	imageID := shared.BindResourceIDFlag(fs, "id", "gameCenterLeaderboardSetImages", "Leaderboard set image ID")
 	confirm := fs.Bool("confirm", false, "Confirm deletion")
 	output := shared.BindOutputFlags(fs)
 

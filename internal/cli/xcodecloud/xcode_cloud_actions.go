@@ -94,6 +94,7 @@ Examples:
   asc xcode-cloud actions view --id "ACTION_ID" --output table`,
 		IDFlag:      "id",
 		IDUsage:     "Build action ID",
+		IDType:      "ciBuildActions",
 		ErrorPrefix: "xcode-cloud actions view",
 		ContextTimeout: func(ctx context.Context) (context.Context, context.CancelFunc) {
 			return contextWithXcodeCloudTimeout(ctx, 0)
@@ -117,6 +118,7 @@ Examples:
   asc xcode-cloud actions build-run --id "ACTION_ID" --output table`,
 		IDFlag:      "id",
 		IDUsage:     "Build action ID",
+		IDType:      "ciBuildActions",
 		ErrorPrefix: "xcode-cloud actions build-run",
 		ContextTimeout: func(ctx context.Context) (context.Context, context.CancelFunc) {
 			return contextWithXcodeCloudTimeout(ctx, 0)

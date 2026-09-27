@@ -226,7 +226,7 @@ Examples:
 // SubscriptionsVersionsViewCommand returns the versions view command.
 func SubscriptionsVersionsViewCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("versions view", flag.ExitOnError)
-	id := fs.String("id", "", "Subscription version ID")
+	id := shared.BindResourceIDFlag(fs, "id", "subscriptionVersions", "Subscription version ID")
 	fields := fs.String("fields", "", "Sparse fields for subscriptionVersions")
 	subscriptionFields := fs.String("subscription-fields", "", "Sparse fields for included subscriptions")
 	imageFields := fs.String("image-fields", "", "Sparse fields for included subscriptionImages")

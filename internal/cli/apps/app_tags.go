@@ -208,7 +208,7 @@ func AppTagsGetCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("app-tags view", flag.ExitOnError)
 
 	appID := fs.String("app", "", "App Store Connect app ID (or ASC_APP_ID env)")
-	tagID := fs.String("id", "", "App tag ID")
+	tagID := shared.BindResourceIDFlag(fs, "id", "appTags", "App tag ID")
 	fields := fs.String("fields", "", "Fields to include: name, visibleInAppStore, territories")
 	include := fs.String("include", "", "Include related resources: territories")
 	territoryFields := fs.String("territory-fields", "", "Territory fields to include: currency")
@@ -333,7 +333,7 @@ Examples:
 func AppTagsUpdateCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("app-tags update", flag.ExitOnError)
 
-	tagID := fs.String("id", "", "App tag ID")
+	tagID := shared.BindResourceIDFlag(fs, "id", "appTags", "App tag ID")
 	visibleInAppStore := fs.Bool("visible-in-app-store", false, "Set visibility in the App Store")
 	confirm := fs.Bool("confirm", false, "Confirm update")
 	output := shared.BindOutputFlags(fs)
@@ -396,7 +396,7 @@ Examples:
 func AppTagsTerritoriesCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("app-tags territories", flag.ExitOnError)
 
-	tagID := fs.String("id", "", "App tag ID")
+	tagID := shared.BindResourceIDFlag(fs, "id", "appTags", "App tag ID")
 	fields := fs.String("fields", "", "Fields to include: currency")
 	limit := fs.Int("limit", 0, "Maximum results per page (1-200)")
 	next := fs.String("next", "", "Fetch next page using a links.next URL")
@@ -484,7 +484,7 @@ Examples:
 func AppTagsTerritoriesRelationshipsCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("app-tags territories-links", flag.ExitOnError)
 
-	tagID := fs.String("id", "", "App tag ID")
+	tagID := shared.BindResourceIDFlag(fs, "id", "appTags", "App tag ID")
 	limit := fs.Int("limit", 0, "Maximum results per page (1-200)")
 	next := fs.String("next", "", "Fetch next page using a links.next URL")
 	paginate := fs.Bool("paginate", false, "Automatically fetch all pages (aggregate results)")

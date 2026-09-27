@@ -9,7 +9,7 @@ import (
 	"github.com/rudrankriyam/App-Store-Connect-CLI/internal/asc"
 )
 
-const analyticsInstanceFetchConcurrency = 4
+const analyticsInstanceFetchConcurrency = 8
 
 var (
 	analyticsInstanceFetchMaxInFlight atomic.Int32

@@ -33,7 +33,7 @@ func NewPricingSetCommand(config PricingSetCommandConfig) *ffcli.Command {
 	fs := flag.NewFlagSet(config.FlagSetName, flag.ExitOnError)
 
 	appID := fs.String("app", "", "App Store Connect app ID (or ASC_APP_ID)")
-	pricePointID := fs.String("price-point", "", "App price point ID")
+	pricePointID := BindResourceIDFlag(fs, "price-point", "appPricePoints", "App price point ID")
 	tier := fs.Int("tier", 0, "Pricing tier number (1-based, mutually exclusive with --price-point, --price, and --free)")
 	price := fs.String("price", "", "Customer price (e.g., 0.99, mutually exclusive with --price-point, --tier, and --free) to select price point")
 	free := fs.Bool("free", false, "Set app price to Free ($0), mutually exclusive with --price-point, --tier, and --price")
