@@ -264,7 +264,7 @@ Examples:
 func SubscriptionsGroupsGetCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("groups view", flag.ExitOnError)
 
-	groupID := fs.String("id", "", "Subscription group ID")
+	groupID := shared.BindResourceIDFlag(fs, "id", "subscriptionGroups", "Subscription group ID")
 	include := fs.String("include", "", "Include relationships: subscriptions,subscriptionGroupLocalizations,versions")
 	fields := fs.String("fields", "", "Group fields: referenceName,subscriptions,subscriptionGroupLocalizations,versions")
 	versionFields := fs.String("version-fields", "", "Included version fields (comma-separated)")
@@ -334,7 +334,7 @@ Examples:
 func SubscriptionsGroupsUpdateCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("groups update", flag.ExitOnError)
 
-	groupID := fs.String("id", "", "Subscription group ID")
+	groupID := shared.BindResourceIDFlag(fs, "id", "subscriptionGroups", "Subscription group ID")
 	referenceName := fs.String("reference-name", "", "Reference name")
 	output := shared.BindOutputFlags(fs)
 
@@ -387,7 +387,7 @@ Examples:
 func SubscriptionsGroupsDeleteCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("groups delete", flag.ExitOnError)
 
-	groupID := fs.String("id", "", "Subscription group ID")
+	groupID := shared.BindResourceIDFlag(fs, "id", "subscriptionGroups", "Subscription group ID")
 	confirm := fs.Bool("confirm", false, "Confirm deletion")
 	output := shared.BindOutputFlags(fs)
 
@@ -1391,7 +1391,7 @@ func SubscriptionsPricesAddCommand() *ffcli.Command {
 
 	subID := shared.BindResourceIDFlag(fs, "subscription-id", "subscriptions", "Subscription ID, product ID, or exact current name")
 	appID := fs.String("app", "", subscriptionLookupAppUsage)
-	pricePointID := fs.String("price-point", "", "Subscription price point ID")
+	pricePointID := shared.BindResourceIDFlag(fs, "price-point", "subscriptionPricePoints", "Subscription price point ID")
 	tier := fs.Int("tier", 0, "Pricing tier number (mutually exclusive with --price-point and --price)")
 	price := fs.String("price", "", "Customer price to select price point (mutually exclusive with --price-point and --tier)")
 	territory := fs.String("territory", "", "Territory input (accepts alpha-2, alpha-3, or exact English country name; e.g., US, USA, United States)")

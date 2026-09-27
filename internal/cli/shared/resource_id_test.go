@@ -162,3 +162,36 @@ func TestResolveAppIDAcceptsAppSelfLink(t *testing.T) {
 		t.Fatalf("wrong-type link = %q, want unchanged", got)
 	}
 }
+
+func TestAppIDFlagValue(t *testing.T) {
+	for _, test := range []struct {
+		value string
+		want  string
+	}{
+		{value: "", want: ""},
+		{value: " 123456789 ", want: "123456789"},
+		{value: "com.example.app", want: "com.example.app"},
+		{value: "https://api.appstoreconnect.apple.com/v1/apps/123456789", want: "123456789"},
+	} {
+		got, err := AppIDFlagValue(test.value)
+		if err != nil {
+			t.Fatalf("AppIDFlagValue(%q) error: %v", test.value, err)
+		}
+		if got != test.want {
+			t.Fatalf("AppIDFlagValue(%q) = %q, want %q", test.value, got, test.want)
+		}
+	}
+
+	wrong := "https://api.appstoreconnect.apple.com/v1/builds/abc"
+	var err error
+	stderr := captureStderr(t, func() {
+		_, err = AppIDFlagValue(wrong)
+	})
+	if err == nil || !IsReportedUsageError(err) {
+		t.Fatalf("error = %v, want reported usage error", err)
+	}
+	want := `Error: invalid value "` + wrong + `" for flag -app: expected a self-link of type apps, got builds`
+	if strings.TrimSpace(stderr) != want {
+		t.Fatalf("stderr = %q, want %q", stderr, want)
+	}
+}

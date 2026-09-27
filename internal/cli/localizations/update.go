@@ -19,9 +19,9 @@ func LocalizationsUpdateCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("update", flag.ExitOnError)
 
 	localizationID := fs.String("id", "", "Localization resource ID (skips parent and locale lookup)")
-	versionID := fs.String("version", "", "App Store version ID (for version localizations)")
+	versionID := shared.BindResourceIDFlag(fs, "version", "appStoreVersions", "App Store version ID (for version localizations)")
 	appID := fs.String("app", "", "App Store Connect app ID (or ASC_APP_ID, for app-info localizations)")
-	appInfoID := fs.String("app-info", "", "App Info ID (optional override)")
+	appInfoID := shared.BindResourceIDFlag(fs, "app-info", "appInfos", "App Info ID (optional override)")
 	locType := fs.String("type", shared.LocalizationTypeVersion, "Localization type: version (default) or app-info")
 	locale := fs.String("locale", "", "Locale to update when resolving by parent (reuse exact ASC locale like en-US, ar-SA, zh-Hans)")
 

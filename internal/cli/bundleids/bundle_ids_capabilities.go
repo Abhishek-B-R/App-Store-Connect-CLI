@@ -223,7 +223,7 @@ the API cannot create, even when that capability is already enabled.`,
 func BundleIDsCapabilitiesUpdateCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("update", flag.ExitOnError)
 
-	id := fs.String("id", "", "Capability ID")
+	id := shared.BindResourceIDFlag(fs, "id", "bundleIdCapabilities", "Capability ID")
 	capabilityType := fs.String("capability", "", "Capability type (e.g., ICLOUD, IN_APP_PURCHASE)")
 	settings := fs.String("settings", "", "Capability settings as a structure-validated JSON array")
 	output := shared.BindOutputFlags(fs)
@@ -291,7 +291,7 @@ Examples:
 func BundleIDsCapabilitiesRemoveCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("remove", flag.ExitOnError)
 
-	id := fs.String("id", "", "Capability ID")
+	id := shared.BindResourceIDFlag(fs, "id", "bundleIdCapabilities", "Capability ID")
 	confirm := fs.Bool("confirm", false, "Confirm deletion")
 	output := shared.BindOutputFlags(fs)
 

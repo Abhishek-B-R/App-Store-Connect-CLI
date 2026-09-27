@@ -244,6 +244,7 @@ Examples:
   asc win-back-offers view --id "OFFER_ID"`,
 		IDFlag:      "id",
 		IDUsage:     "Win-back offer ID",
+		IDType:      "winBackOffers",
 		ErrorPrefix: "win-back-offers view",
 		Fetch: func(ctx context.Context, client *asc.Client, id string) (any, error) {
 			return client.GetWinBackOffer(ctx, id)
@@ -564,7 +565,7 @@ Examples:
 func WinBackOffersUpdateCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("update", flag.ExitOnError)
 
-	id := fs.String("id", "", "Win-back offer ID")
+	id := shared.BindResourceIDFlag(fs, "id", "winBackOffers", "Win-back offer ID")
 	var eligibilityPaidMonths optionalInt
 	fs.Var(&eligibilityPaidMonths, "eligibility-paid-months", "Paid subscription duration in months")
 	var eligibilityLastSubscribedMin optionalInt
@@ -700,7 +701,7 @@ Examples:
 func WinBackOffersDeleteCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("delete", flag.ExitOnError)
 
-	id := fs.String("id", "", "Win-back offer ID")
+	id := shared.BindResourceIDFlag(fs, "id", "winBackOffers", "Win-back offer ID")
 	confirm := fs.Bool("confirm", false, "Confirm deletion")
 	output := shared.BindOutputFlags(fs)
 
@@ -751,7 +752,7 @@ Examples:
 func WinBackOffersPricesCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("prices", flag.ExitOnError)
 
-	id := fs.String("id", "", "Win-back offer ID")
+	id := shared.BindResourceIDFlag(fs, "id", "winBackOffers", "Win-back offer ID")
 	territories := fs.String("territory", "", "Territory inputs, comma-separated (accepts alpha-2, alpha-3, or exact English country names)")
 	fields := fs.String("fields", "", "Fields to include: "+strings.Join(winBackOfferPriceFieldsList(), ", "))
 	territoryFields := fs.String("territory-fields", "", "Territory fields to include: "+strings.Join(winBackOfferTerritoryFieldsList(), ", "))
@@ -875,6 +876,7 @@ Examples:
   asc win-back-offers prices-links --id "OFFER_ID" --paginate`,
 		ParentFlag:  "id",
 		ParentUsage: "Win-back offer ID",
+		ParentType:  "winBackOffers",
 		LimitMax:    winBackOffersMaxLimit,
 		ErrorPrefix: "win-back-offers prices-links",
 		FetchPage: func(ctx context.Context, client *asc.Client, offerID string, limit int, next string) (asc.PaginatedResponse, error) {
