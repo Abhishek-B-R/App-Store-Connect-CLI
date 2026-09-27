@@ -147,7 +147,7 @@ Examples:
 func BuildLocalizationsGetCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("view", flag.ExitOnError)
 
-	localizationID := fs.String("id", "", "Localization ID")
+	localizationID := shared.BindResourceIDFlag(fs, "id", "appStoreVersionLocalizations", "Localization ID")
 	output := shared.BindOutputFlags(fs)
 
 	return &ffcli.Command{
@@ -281,7 +281,7 @@ Examples:
 func BuildLocalizationsUpdateCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("update", flag.ExitOnError)
 
-	localizationID := fs.String("id", "", "Localization ID")
+	localizationID := shared.BindResourceIDFlag(fs, "id", "appStoreVersionLocalizations", "Localization ID")
 	whatsNew := fs.String("whats-new", "", "Release notes (whats new), up to 4000 characters")
 	output := shared.BindOutputFlags(fs)
 
@@ -340,7 +340,7 @@ Examples:
 func BuildLocalizationsDeleteCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("delete", flag.ExitOnError)
 
-	localizationID := fs.String("id", "", "Localization ID")
+	localizationID := shared.BindResourceIDFlag(fs, "id", "appStoreVersionLocalizations", "Localization ID")
 	confirm := fs.Bool("confirm", false, "Confirm deletion")
 	output := shared.BindOutputFlags(fs)
 

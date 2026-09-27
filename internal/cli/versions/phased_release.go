@@ -161,7 +161,7 @@ Examples:
 func PhasedReleaseUpdateCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("phased-release update", flag.ExitOnError)
 
-	phasedID := fs.String("id", "", "Phased release ID (required)")
+	phasedID := shared.BindResourceIDFlag(fs, "id", "appStoreVersionPhasedReleases", "Phased release ID (required)")
 	state := fs.String("state", "", "New state: ACTIVE, PAUSED, COMPLETE (required)")
 	confirm := fs.Bool("confirm", false, "Confirm COMPLETE, which releases the update to all users immediately")
 	output := shared.BindOutputFlags(fs)
@@ -228,7 +228,7 @@ Examples:
 func PhasedReleaseDeleteCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("phased-release delete", flag.ExitOnError)
 
-	phasedID := fs.String("id", "", "Phased release ID (required)")
+	phasedID := shared.BindResourceIDFlag(fs, "id", "appStoreVersionPhasedReleases", "Phased release ID (required)")
 	confirm := fs.Bool("confirm", false, "Confirm deletion (required)")
 	output := shared.BindOutputFlags(fs)
 

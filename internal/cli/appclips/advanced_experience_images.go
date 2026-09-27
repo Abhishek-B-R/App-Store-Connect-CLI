@@ -42,7 +42,7 @@ Examples:
 func AppClipAdvancedExperienceImagesGetCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("view", flag.ExitOnError)
 
-	imageID := fs.String("id", "", "Image ID")
+	imageID := shared.BindResourceIDFlag(fs, "id", "appClipAdvancedExperienceImages", "Image ID")
 	output := shared.BindOutputFlags(fs)
 
 	return &ffcli.Command{

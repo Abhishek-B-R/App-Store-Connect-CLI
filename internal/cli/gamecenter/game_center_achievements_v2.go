@@ -241,7 +241,7 @@ Examples:
 func GameCenterAchievementVersionsV2GetCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("view", flag.ExitOnError)
 
-	versionID := fs.String("id", "", "Game Center achievement version ID")
+	versionID := shared.BindResourceIDFlag(fs, "id", "gameCenterAchievementVersions", "Game Center achievement version ID")
 	output := shared.BindOutputFlags(fs)
 
 	return &ffcli.Command{
@@ -428,7 +428,7 @@ Examples:
 func GameCenterAchievementLocalizationsV2GetCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("view", flag.ExitOnError)
 
-	localizationID := fs.String("id", "", "Game Center achievement localization ID")
+	localizationID := shared.BindResourceIDFlag(fs, "id", "gameCenterAchievementLocalizations", "Game Center achievement localization ID")
 	output := shared.BindOutputFlags(fs)
 
 	return &ffcli.Command{
@@ -547,7 +547,7 @@ Examples:
 func GameCenterAchievementLocalizationsV2UpdateCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("update", flag.ExitOnError)
 
-	localizationID := fs.String("id", "", "Game Center achievement localization ID")
+	localizationID := shared.BindResourceIDFlag(fs, "id", "gameCenterAchievementLocalizations", "Game Center achievement localization ID")
 	name := fs.String("name", "", "Achievement name")
 	beforeEarned := fs.String("before-earned-description", "", "Description shown before earning")
 	afterEarned := fs.String("after-earned-description", "", "Description shown after earning")
@@ -616,7 +616,7 @@ Examples:
 func GameCenterAchievementLocalizationsV2DeleteCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("delete", flag.ExitOnError)
 
-	localizationID := fs.String("id", "", "Game Center achievement localization ID")
+	localizationID := shared.BindResourceIDFlag(fs, "id", "gameCenterAchievementLocalizations", "Game Center achievement localization ID")
 	confirm := fs.Bool("confirm", false, "Confirm deletion")
 	output := shared.BindOutputFlags(fs)
 
@@ -746,7 +746,7 @@ Examples:
 func GameCenterAchievementImagesV2GetCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("view", flag.ExitOnError)
 
-	imageID := fs.String("id", "", "Game Center achievement image ID")
+	imageID := shared.BindResourceIDFlag(fs, "id", "gameCenterAchievementImages", "Game Center achievement image ID")
 	localizationID := shared.BindResourceIDFlag(fs, "localization-id", "gameCenterAchievementLocalizations", "Game Center achievement localization ID")
 	output := shared.BindOutputFlags(fs)
 
@@ -803,7 +803,7 @@ Examples:
 func GameCenterAchievementImagesV2DeleteCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("delete", flag.ExitOnError)
 
-	imageID := fs.String("id", "", "Game Center achievement image ID")
+	imageID := shared.BindResourceIDFlag(fs, "id", "gameCenterAchievementImages", "Game Center achievement image ID")
 	confirm := fs.Bool("confirm", false, "Confirm deletion")
 	output := shared.BindOutputFlags(fs)
 

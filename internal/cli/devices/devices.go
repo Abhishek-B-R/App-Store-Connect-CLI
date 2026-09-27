@@ -180,7 +180,7 @@ Examples:
 func DevicesGetCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("view", flag.ExitOnError)
 
-	id := fs.String("id", "", "Device ID")
+	id := shared.BindResourceIDFlag(fs, "id", "devices", "Device ID")
 	fields := fs.String("fields", "", "Fields to include: addedDate, deviceClass, model, name, platform, status, udid")
 	output := shared.BindOutputFlags(fs)
 
@@ -489,7 +489,7 @@ func normalizeDeviceUDIDForComparison(value string) string {
 func DevicesUpdateCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("update", flag.ExitOnError)
 
-	id := fs.String("id", "", "Device ID")
+	id := shared.BindResourceIDFlag(fs, "id", "devices", "Device ID")
 	name := fs.String("name", "", "Device name")
 	status := fs.String("status", "", "Device status: ENABLED, DISABLED")
 	output := shared.BindOutputFlags(fs)

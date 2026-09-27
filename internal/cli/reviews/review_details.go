@@ -28,7 +28,7 @@ const (
 func ReviewDetailsGetCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("details-get", flag.ExitOnError)
 
-	detailID := fs.String("id", "", "App Store review detail ID (required)")
+	detailID := shared.BindResourceIDFlag(fs, "id", "appStoreReviewDetails", "App Store review detail ID (required)")
 	includeSensitive := shared.BindIncludeSensitiveFlag(fs)
 	output := shared.BindOutputFlags(fs)
 
@@ -318,7 +318,7 @@ Any other 409 keeps failing.`,
 func ReviewDetailsUpdateCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("details-update", flag.ExitOnError)
 
-	detailID := fs.String("id", "", "App Store review detail ID (required)")
+	detailID := shared.BindResourceIDFlag(fs, "id", "appStoreReviewDetails", "App Store review detail ID (required)")
 	contactFirstName := fs.String("contact-first-name", "", "Contact first name")
 	contactLastName := fs.String("contact-last-name", "", "Contact last name")
 	contactEmail := fs.String("contact-email", "", "Contact email")

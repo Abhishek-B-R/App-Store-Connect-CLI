@@ -430,7 +430,7 @@ func profilesListFlagWasProvided(fs *flag.FlagSet, name string) bool {
 func ProfilesGetCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("view", flag.ExitOnError)
 
-	id := fs.String("id", "", "Profile ID")
+	id := shared.BindResourceIDFlag(fs, "id", "profiles", "Profile ID")
 	include := fs.String("include", "", "Include related resources: bundleId, certificates, devices")
 	output := shared.BindOutputFlags(fs)
 
@@ -486,7 +486,7 @@ func ProfilesCreateCommand() *ffcli.Command {
 
 	name := fs.String("name", "", "Profile name")
 	profileType := fs.String("profile-type", "", "Profile type (e.g., IOS_APP_DEVELOPMENT)")
-	bundleID := fs.String("bundle", "", "Bundle ID")
+	bundleID := shared.BindResourceIDFlag(fs, "bundle", "bundleIds", "Bundle ID")
 	certificates := shared.BindOnceCSVFlag(fs, "certificate", "Certificate ID(s), comma-separated")
 	devices := shared.BindOnceCSVFlag(fs, "device", "Device ID(s), comma-separated (optional)")
 	output := shared.BindOutputFlags(fs)
@@ -555,7 +555,7 @@ Examples:
 func ProfilesDeleteCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("delete", flag.ExitOnError)
 
-	id := fs.String("id", "", "Profile ID")
+	id := shared.BindResourceIDFlag(fs, "id", "profiles", "Profile ID")
 	confirm := fs.Bool("confirm", false, "Confirm deletion")
 	output := shared.BindOutputFlags(fs)
 
@@ -606,7 +606,7 @@ Examples:
 func ProfilesDownloadCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("download", flag.ExitOnError)
 
-	id := fs.String("id", "", "Profile ID")
+	id := shared.BindResourceIDFlag(fs, "id", "profiles", "Profile ID")
 	outputPath := fs.String("output", "", "Output .mobileprovision or .provisionprofile file path")
 	output := shared.BindMetadataOutputFlags(fs)
 
