@@ -280,6 +280,7 @@ func registerAllOutputRenderers() {
 	registerRowsWithSingleResourceAdapter(actorsRows)
 	registerRowsWithSingleResourceAdapter(devicesRows)
 	registerRows(deviceLocalUDIDRows)
+	registerDirect(renderScreenshotFrameBatchResult)
 	registerDirect(func(v *DeviceURLRegistrationResult, render func([]string, [][]string)) error {
 		h, r := deviceURLRegistrationSummaryRows(v)
 		render(h, r)
