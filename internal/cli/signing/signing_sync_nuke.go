@@ -93,6 +93,9 @@ Examples:
 			if selectedBranch == "" {
 				return shared.UsageError("--branch must not be empty")
 			}
+			if *confirm && *dryRun {
+				return shared.UsageError("--confirm and --dry-run are mutually exclusive")
+			}
 			if !*confirm && !*dryRun {
 				return shared.UsageError("--confirm is required to delete profiles and revoke certificates (or pass --dry-run to preview)")
 			}

@@ -1,6 +1,8 @@
 package cmdtest
 
 import (
+	"fmt"
+	"net/http"
 	"strings"
 	"testing"
 
@@ -66,5 +68,40 @@ func TestSigningSyncLifecycleUsageErrorsExitTwoBeforeSideEffects(t *testing.T) {
 				t.Fatalf("stderr shows side effects: %q", stderr)
 			}
 		})
+	}
+}
+
+func TestSigningSyncNukeRejectsConfirmWithDryRunBeforeRequests(t *testing.T) {
+	setupSubmitCreateAuth(t)
+	t.Setenv("ASC_SIGNING_SYNC_PASSWORD", "repository-password")
+
+	var requests lockedCounter
+	installDefaultTransport(t, roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		requests.Inc()
+		return nil, fmt.Errorf("unexpected request: %s %s", req.Method, req.URL.String())
+	}))
+
+	var code int
+	stdout, stderr := captureOutput(t, func() {
+		code = rootcmd.Run([]string{
+			"signing", "sync", "nuke",
+			"--profile-type", "IOS_APP_DEVELOPMENT",
+			"--repo", "git@example.com:team/signing.git",
+			"--confirm",
+			"--dry-run",
+		}, "test")
+	})
+	if code != rootcmd.ExitUsage {
+		t.Fatalf("exit code = %d, want %d; stderr=%q", code, rootcmd.ExitUsage, stderr)
+	}
+	if stdout != "" {
+		t.Fatalf("stdout = %q, want empty", stdout)
+	}
+	assertUsageDiagnosticFirstLine(t, stderr, "--confirm and --dry-run are mutually exclusive")
+	if strings.Contains(stderr, "Cloning signing repo") || strings.Contains(stderr, "Listing signing assets") || strings.Contains(stderr, "Dry run:") {
+		t.Fatalf("stderr shows side effects: %q", stderr)
+	}
+	if got := requests.Load(); got != 0 {
+		t.Fatalf("HTTP requests = %d, want 0", got)
 	}
 }
