@@ -14,6 +14,15 @@ func TestSigningSyncLifecycleUsageErrorsExitTwoBeforeSideEffects(t *testing.T) {
 		want string
 	}{
 		{
+			name: "nuke without confirm",
+			args: []string{
+				"signing", "sync", "nuke",
+				"--profile-type", "IOS_APP_DEVELOPMENT",
+				"--repo", "git@example.com:team/signing.git",
+			},
+			want: "--confirm is required to delete profiles and revoke certificates (or pass --dry-run to preview)",
+		},
+		{
 			name: "force for new devices with App Store profile",
 			args: []string{
 				"signing", "sync", "push",
@@ -53,7 +62,7 @@ func TestSigningSyncLifecycleUsageErrorsExitTwoBeforeSideEffects(t *testing.T) {
 			if !strings.Contains(stderr, tt.want) {
 				t.Fatalf("stderr = %q, want %q", stderr, tt.want)
 			}
-			if strings.Contains(stderr, "Cloning signing repo") {
+			if strings.Contains(stderr, "Cloning signing repo") || strings.Contains(stderr, "Listing signing assets") {
 				t.Fatalf("stderr shows side effects: %q", stderr)
 			}
 		})

@@ -71,7 +71,9 @@ ciphertext only. Password rotation remains git-only.
 
 Push --renew-expired replaces an expired profile with a same-name profile, and
 --force-for-new-devices recreates a development or ad hoc profile when its
-devices differ from the enabled device list. Both are git-only.
+devices differ from the enabled device list. nuke deletes every profile of one
+type, revokes the matching certificates, and removes their encrypted
+artifacts. These lifecycle operations are git-only.
 
 Examples:
   asc signing sync push --bundle-id com.example.app --profile-type IOS_APP_STORE \
@@ -94,13 +96,17 @@ Examples:
     --password-file ~/.config/asc/signing-sync-password --output-dir ./signing
 
   asc signing sync push --bundle-id com.example.app --profile-type IOS_APP_ADHOC --force-for-new-devices \
-    --repo git@github.com:team/certs.git --password-file ~/.config/asc/signing-sync-password`,
+    --repo git@github.com:team/certs.git --password-file ~/.config/asc/signing-sync-password
+
+  asc signing sync nuke --profile-type IOS_APP_DEVELOPMENT --repo git@github.com:team/certs.git \
+    --password-file ~/.config/asc/signing-sync-password --dry-run`,
 		FlagSet:   fs,
 		UsageFunc: shared.DefaultUsageFunc,
 		Subcommands: []*ffcli.Command{
 			syncPushCommand(),
 			syncPullCommand(),
 			syncRotatePasswordCommand(),
+			syncNukeCommand(),
 		},
 		Exec: func(ctx context.Context, args []string) error {
 			return flag.ErrHelp
