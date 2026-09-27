@@ -236,7 +236,10 @@ func TestOverlayFixtureConvertsToRendererConfigGolden(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != string(want) {
-		t.Fatalf("renderer config mismatch\n--- got ---\n%s\n--- want ---\n%s", got, want)
+	// Git may check the golden out with CRLF line endings on Windows
+	// (core.autocrlf); the renderer config itself always uses LF.
+	wantText := strings.ReplaceAll(string(want), "\r\n", "\n")
+	if got != wantText {
+		t.Fatalf("renderer config mismatch\n--- got ---\n%s\n--- want ---\n%s", got, wantText)
 	}
 }
