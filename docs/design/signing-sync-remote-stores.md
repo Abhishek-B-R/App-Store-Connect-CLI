@@ -2,8 +2,9 @@
 
 ## Placement and invocation
 
-This change extends the existing `asc signing sync push` and
-`asc signing sync pull` commands. It adds no new command group and no second
+This change extends the existing `asc signing sync push`,
+`asc signing sync pull`, and, for object storage,
+`asc signing sync rotate-password` commands. It adds no new command group and no second
 encryption format. Encrypted git remains the default and keeps its current
 invocation, flags, and output.
 
@@ -22,19 +23,25 @@ asc signing sync push --bundle-id com.example.app --profile-type IOS_APP_STORE \
 asc signing sync pull --storage aws-secrets-manager --region us-east-1 \
   --prefix asc-signing --password-file ~/.config/asc/signing-sync-password \
   --output-dir ./signing
+
+# Experimental S3-compatible object storage.
+asc signing sync push --bundle-id com.example.app --profile-type IOS_APP_STORE \
+  --storage object --object-bucket team-certs --object-prefix asc/ \
+  --password-file ~/.config/asc/signing-sync-password
 ```
 
 ## Storage selection
 
-`--storage` accepts `git` (default), `gitlab-secure-files`, and
-`aws-secrets-manager`. Any other value is a usage error; no unsupported value
+`--storage` accepts `git` (default), `gitlab-secure-files`,
+`aws-secrets-manager`, and `object`. Any other value is a usage error; no unsupported value
 is silently ignored.
 
 | Storage | Required locators | Rejected locators |
 | --- | --- | --- |
-| `git` | `--repo` | `--prefix`, `--region`, `--gitlab-*` |
-| `gitlab-secure-files` | `--gitlab-project`, `--prefix`, `--gitlab-token-file` | `--repo`, `--branch`, `--region` |
-| `aws-secrets-manager` | `--prefix`, `--region` | `--repo`, `--branch`, `--gitlab-*` |
+| `git` | `--repo` | `--prefix`, `--region`, `--gitlab-*`, `--object-*` |
+| `gitlab-secure-files` | `--gitlab-project`, `--prefix`, `--gitlab-token-file` | `--repo`, `--branch`, `--region`, `--object-*` |
+| `aws-secrets-manager` | `--prefix`, `--region` | `--repo`, `--branch`, `--gitlab-*`, `--object-*` |
+| `object` | `--object-bucket` | `--repo`, `--branch`, `--prefix`, `--region`, `--gitlab-*` |
 
 `--gitlab-host` is optional and defaults to `https://gitlab.com`. It must be an
 https URL without embedded credentials. The GitLab token is read only through
@@ -43,8 +50,13 @@ request header, and never appears in output, diagnostics, or errors. AWS
 credentials come from the standard AWS environment that the SDK already
 expects; this change adds no credential file format.
 
-`asc signing sync rotate-password` remains git-only. Invoking it with any other
-storage returns a usage error rather than a partial rotation.
+`--object-prefix`, `--object-region`, and `--object-endpoint` are optional.
+Mixed backend flags are usage errors (exit code 2) raised before any secret
+read or network request.
+
+`asc signing sync rotate-password` supports `git` and `object`. Invoking it
+with GitLab Secure Files or AWS Secrets Manager returns a usage error rather
+than a partial rotation.
 
 ## Artifact model
 
@@ -59,6 +71,8 @@ replaces the clone and publish steps:
   upload or replace changed artifacts.
 - `aws-secrets-manager`: read every prefixed secret, then create or update the
   corresponding secrets.
+- `object`: read every `.enc` object under the prefix, then conditionally
+  create or replace changed objects.
 
 Each remote request is bounded by the shared CLI request timeout, and GitLab
 uploads use the shared upload timeout, so one stalled request cannot hang a
@@ -149,12 +163,79 @@ explains the limit rather than truncating. Secret names are validated against
 the documented AWS character set, so an artifact path that AWS cannot name
 fails closed instead of being silently renamed.
 
+## S3-compatible object storage
+
+Object keys use the git working tree layout exactly:
+`<object-prefix>/<encrypted relative path>.enc`, or the bare relative path when
+no prefix is given. A bucket prefix and an encrypted git repository can
+therefore be mirrored byte for byte. One trailing slash on `--object-prefix` is
+accepted, and the prefix otherwise follows the shared prefix rules. The bucket
+must follow the S3 naming rules. `--object-endpoint` accepts an HTTPS origin
+without credentials, path, query, or fragment and switches to path-style
+addressing for S3-compatible services.
+
+The implementation uses the AWS SDK S3 client that the repository already
+depends on; no dependency is added. Credentials and, unless `--object-region`
+is set, the region come from the standard AWS configuration chain:
+environment variables, shared configuration or SSO profiles, web identity for
+workload identity, and container or instance metadata. No flag accepts a
+credential. A missing region fails before any request. `AWS_CA_BUNDLE` is
+honored, and signed requests never follow redirects.
+
+Fetch lists the prefix, downloads every `.enc` object, and records each
+object's entity tag. Publish skips unchanged artifacts, creates new objects
+with `If-None-Match: *`, and replaces existing objects with `If-Match` on the
+fetched entity tag. A precondition failure is reported as a conflict that
+tells the operator to pull and retry, with exit code 1; newer data is never
+overwritten. Services that ignore conditional request headers cannot provide
+this guarantee. Push never deletes objects, and a multi-artifact push that hits
+a conflict can leave the artifacts before the conflict published.
+
+Rotation cannot replace several objects atomically, so it writes new objects
+first and then swaps them in:
+
+1. Stage. Every re-encrypted artifact is written with `If-None-Match: *` to
+   `<key>.asc-rotation-<random id>`. Staged keys do not end in `.enc`, so
+   fetches ignore them. A failure deletes the staged objects and leaves every
+   live artifact on the current password.
+2. Verify. A `HEAD` of every live key must return the fetched entity tag. A
+   concurrent push aborts the rotation before any live write, deletes the
+   staged objects, and exits 1.
+3. Swap. Each live object is replaced with `If-Match` on its fetched entity
+   tag. If one replacement fails, the already replaced objects are restored
+   from the fetched ciphertext, again conditionally, using a recovery context
+   that survives command cancellation. After a complete rollback, every
+   artifact still uses the current password and the staged objects are
+   deleted.
+
+Remaining failure modes:
+
+- Rollback also fails. The error names the artifacts that now use the new
+  password, and the staged objects are kept. Every staged object holds the new
+  ciphertext, so copying each one over its live key finishes the rotation.
+- The process dies during the swap. The store is mixed, and the staged objects
+  still hold the complete new-password set, so the same recovery applies.
+- The service returns no entity tag for a replaced object. The rotation stops
+  and rolls back the earlier objects. It reports that object as using the new
+  password instead of restoring it with an unconditional write.
+- Staged cleanup fails after an abort or rollback. The error names each
+  leftover staged key. Cleanup runs with a recovery context, so a canceled
+  command still removes its staged objects.
+- Staged cleanup fails after a successful swap. The command succeeds and warns
+  on stderr about each leftover staged key. Leftover staged objects are
+  ignored by pulls and safe to delete.
+
+Read-only mode allows fetches and refuses every object `PUT` and `DELETE`
+before the request. Errors keep S3 error codes and HTTP status while dropping
+provider messages and credential-process output.
+
 ## Output and exit codes
 
 Structured output keeps its existing shape. `repoUrl` carries the redacted git
 remote for git storage and a non-secret locator for remote storage
-(`gitlab-secure-files://host/projects/<id>/<prefix>` or
-`aws-secrets-manager://<region>/<prefix>`). Data goes to stdout and progress to
+(`gitlab-secure-files://host/projects/<id>/<prefix>`,
+`aws-secrets-manager://<region>/<prefix>`, or `s3://<bucket>/<prefix>`). The
+object storage locator omits any custom endpoint host. Data goes to stdout and progress to
 stderr. Invalid flag combinations use exit code 2 and operational failures use
 exit code 1.
 
@@ -168,7 +249,14 @@ names, and traversal names. AWS coverage uses a stub client so no test dials
 AWS and asserts create/put names, base64 round-trips, that no plaintext is
 stored, and that an oversize artifact fails before the first AWS call. Command
 coverage asserts the storage selection matrix, the experimental help text, the
-protected token-file contract, and that rotation stays git-only. Existing git
+protected token-file contract, and that rotation rejects GitLab and AWS
+Secrets Manager storage. Object storage coverage uses an in-process,
+TLS-served, path-style S3 fake driven through the real SDK. It covers
+byte-identical git-layout round trips, conditional creates and replacements,
+concurrent-writer conflicts on push and rotation, rotation staging, swap,
+rollback, and mixed-state reporting, read-only refusals, pagination, unsafe
+keys, size and count limits, locator validation, and command-level pull and
+rotation. No test contacts a real bucket. Existing git
 signing sync tests are unchanged and still pass.
 
 ## Alternatives
@@ -177,6 +265,9 @@ Adding a second encryption path per backend was rejected: the backends
 transport ciphertext only, so encryption, metadata authentication, and path
 validation stay in one place. Deleting remote artifacts that no longer exist
 locally was rejected because a shared store may hold artifacts written by other
-teams or tools. Implementing rotation for remote stores was rejected for now
-because rotation depends on an atomic whole-store replacement that neither
-backend provides; a partial implementation would risk a half-rotated store.
+teams or tools. Implementing rotation for GitLab Secure Files and AWS Secrets
+Manager was rejected for now because neither backend offers conditional
+writes, so a concurrent push could be overwritten. Object storage rotation
+relies on conditional writes plus staging and rollback instead of a whole-store
+transaction. A pointer object that switches between complete generations was
+rejected because it would break the byte-for-byte git layout.

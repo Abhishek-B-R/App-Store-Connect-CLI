@@ -64,10 +64,21 @@ the same verified signing files.
 Native macOS profile types use .provisionprofile paths; iOS and tvOS profile
 types retain .mobileprovision. Existing legacy profile paths remain readable.
 
-Push and pull can keep the same encrypted artifacts in GitLab Secure Files or
-AWS Secrets Manager instead of git. Encryption, path checks, and size limits
-are unchanged; only the transport differs, and the remote stores hold
-ciphertext only. Password rotation remains git-only.
+Push and pull can keep the same encrypted artifacts in GitLab Secure Files,
+AWS Secrets Manager, or S3-compatible object storage instead of git.
+Encryption, path checks, and size limits are unchanged; only
+the transport differs, and the remote stores hold ciphertext only.
+
+Object storage (--storage object) uses the git tree's layout, so a bucket
+prefix and a repository can be mirrored byte for byte. Credentials and, unless
+--object-region is set, the region come from the standard AWS configuration:
+environment variables, shared config or SSO profiles, web identity, or
+container and instance metadata. No flag accepts a credential. Writes are
+conditional: a push never overwrites an object that changed after it was
+fetched and fails instead, so pull and retry. Endpoints that ignore
+If-Match and If-None-Match lose this protection.
+
+Password rotation supports git and object storage.
 
 Examples:
   asc signing sync push --bundle-id com.example.app --profile-type IOS_APP_STORE \
@@ -87,7 +98,11 @@ Examples:
     --gitlab-token-file ~/.config/asc/gitlab-token --password-file ~/.config/asc/signing-sync-password
 
   asc signing sync pull --storage aws-secrets-manager --region us-east-1 --prefix asc-signing \
-    --password-file ~/.config/asc/signing-sync-password --output-dir ./signing`,
+    --password-file ~/.config/asc/signing-sync-password --output-dir ./signing
+
+  asc signing sync push --bundle-id com.example.app --profile-type IOS_APP_STORE \
+    --storage object --object-bucket team-certs --object-prefix asc/ \
+    --password-file ~/.config/asc/signing-sync-password`,
 		FlagSet:   fs,
 		UsageFunc: shared.DefaultUsageFunc,
 		Subcommands: []*ffcli.Command{
