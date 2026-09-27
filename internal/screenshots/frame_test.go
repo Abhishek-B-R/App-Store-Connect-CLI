@@ -416,7 +416,7 @@ func runFrameWhitespacePathTest(t *testing.T, whitespaceInput, whitespaceOutput 
 
 	kouFixturePath := filepath.Join(baseDir, "kou-fixture.png")
 	writeFrameTestPNG(t, kouFixturePath, makeFrameTestImage(1320, 2868))
-	installFrameTestMockKou(t, kouFixturePath, filepath.Join(baseDir, "kou-out", "framed.png"))
+	installFrameTestMockKou(t, kouFixturePath, "")
 
 	result, err := Frame(context.Background(), FrameRequest{
 		InputPath:  inputPath,
@@ -534,7 +534,7 @@ func TestFrame_InputModeCleansTemporaryKoubouDirectory(t *testing.T) {
 
 	kouFixturePath := filepath.Join(t.TempDir(), "kou-fixture.png")
 	writeFrameTestPNG(t, kouFixturePath, makeFrameTestImage(1320, 2868))
-	installFrameTestMockKou(t, kouFixturePath, filepath.Join(t.TempDir(), "kou-out", "framed.png"))
+	installFrameTestMockKou(t, kouFixturePath, "")
 
 	before := listFrameTempWorkDirs(t)
 	previousWorkRootHook := matrixFrameWorkRootBeforeReadForTest
@@ -577,6 +577,33 @@ func TestFrame_InputModeCleansTemporaryKoubouDirectory(t *testing.T) {
 	}
 }
 
+// TestFrame_InputModeRejectsGeneratedOutputOutsideWorkDirectory checks that
+// the image Frame publishes must come from Koubou's private work directory, so
+// a Koubou result naming any other file is refused before publication.
+func TestFrame_InputModeRejectsGeneratedOutputOutsideWorkDirectory(t *testing.T) {
+	rawPath := filepath.Join(t.TempDir(), "raw.png")
+	writeFrameTestPNG(t, rawPath, makeFrameTestImage(200, 300))
+	kouFixturePath := filepath.Join(t.TempDir(), "kou-fixture.png")
+	writeFrameTestPNG(t, kouFixturePath, makeFrameTestImage(1320, 2868))
+	installFrameTestMockKou(t, kouFixturePath, filepath.Join(t.TempDir(), "elsewhere", "framed.png"))
+
+	outputPath := filepath.Join(t.TempDir(), "framed", "home.png")
+	result, err := Frame(context.Background(), FrameRequest{
+		InputPath:  rawPath,
+		OutputPath: outputPath,
+		Device:     string(DefaultFrameDevice()),
+	})
+	if err == nil || !strings.Contains(err.Error(), "escapes rooted work directory") {
+		t.Fatalf("Frame() = %+v, %v; want work directory escape rejection", result, err)
+	}
+	if _, statErr := os.Stat(outputPath); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("output stat error = %v, want nothing published", statErr)
+	}
+}
+
+// installFrameTestMockKou installs a fake Koubou that copies fixturePath to
+// outputPath on generate. An empty outputPath writes where real Koubou does:
+// output/framed.png beside the generated config, inside the work directory.
 func installFrameTestMockKou(t *testing.T, fixturePath, outputPath string) {
 	t.Helper()
 	skipWindowsUnixExecutableFixtures(t)
@@ -592,9 +619,13 @@ if [ "$1" = "setup-frames" ]; then
   exit 0
 fi
 if [ "$1" = "generate" ]; then
-  mkdir -p "$(dirname "$MOCK_KOU_OUTPUT")"
-  cp "$MOCK_KOU_FIXTURE" "$MOCK_KOU_OUTPUT"
-  printf '[{"name":"framed","path":"%s","success":true}]' "$MOCK_KOU_OUTPUT"
+  output="$MOCK_KOU_OUTPUT"
+  if [ -z "$output" ]; then
+    output="$(dirname "$2")/output/framed.png"
+  fi
+  mkdir -p "$(dirname "$output")"
+  cp "$MOCK_KOU_FIXTURE" "$output"
+  printf '[{"name":"framed","path":"%s","success":true}]' "$output"
   exit 0
 fi
 echo "unsupported args" >&2

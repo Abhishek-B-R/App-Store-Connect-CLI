@@ -658,18 +658,17 @@ func frame(ctx context.Context, req FrameRequest, rootedOutput *rootfs.Root, pin
 		if matrixFrameWorkRootBeforeReadForTest != nil {
 			matrixFrameWorkRootBeforeReadForTest(generatedWorkRoot.Path())
 		}
-		if pinInput {
-			verifiedWorkRoot, verifyErr := generatedWorkRoot.OpenRoot()
-			if verifyErr != nil {
-				return nil, fmt.Errorf("koubou work directory changed during generation: %w", verifyErr)
-			}
-			if closeErr := verifiedWorkRoot.Close(); closeErr != nil {
-				return nil, fmt.Errorf("verify Koubou work directory: %w", closeErr)
-			}
-			generatedRelativePath, err = relativeMatrixOutputPath(generatedWorkRoot.Path(), generatedPath)
-			if err != nil {
-				return nil, fmt.Errorf("koubou output escapes rooted work directory: %w", err)
-			}
+		// Publish only an image Koubou wrote inside the private work root.
+		verifiedWorkRoot, verifyErr := generatedWorkRoot.OpenRoot()
+		if verifyErr != nil {
+			return nil, fmt.Errorf("koubou work directory changed during generation: %w", verifyErr)
+		}
+		if closeErr := verifiedWorkRoot.Close(); closeErr != nil {
+			return nil, fmt.Errorf("verify Koubou work directory: %w", closeErr)
+		}
+		generatedRelativePath, err = relativeMatrixOutputPath(generatedWorkRoot.Path(), generatedPath)
+		if err != nil {
+			return nil, fmt.Errorf("koubou output escapes rooted work directory: %w", err)
 		}
 	}
 
@@ -693,7 +692,7 @@ func frame(ctx context.Context, req FrameRequest, rootedOutput *rootfs.Root, pin
 		}
 		var sourceFile *os.File
 		var openErr error
-		if generatedRelativePath != "" {
+		if generatedWorkRoot != nil {
 			sourceFile, openErr = generatedWorkRoot.OpenFile(generatedRelativePath)
 		} else {
 			sourceFile, openErr = os.Open(generatedPath)
