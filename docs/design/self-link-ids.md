@@ -243,13 +243,190 @@ carried past flag parsing on purpose, so callers keep a plain `*string`.
   `inAppPurchases` depending on `--product-type`. Binding a single type would
   reject valid links.
 - Resources with no single-resource path in `docs/openapi/paths.txt`:
-  `buildBundles`, `webhookDeliveries`, `diagnosticSignatures`, and
-  `inAppPurchasePricePoints` are only reachable through a parent or nested
-  path, so there is no `/v<n>/<type>/<id>` self-link to accept.
+  `buildBundles`, `webhookDeliveries`, `diagnosticSignatures`,
+  `inAppPurchasePricePoints`, and `gameCenterEnabledVersions` are only
+  reachable through a parent or nested path, so there is no
+  `/v<n>/<type>/<id>` self-link to accept.
+- `asc localizations update --id` names an `appStoreVersionLocalizations` or
+  an `appInfoLocalizations` resource depending on `--type`, like the
+  type-dependent flags above.
+- `asc versions rating-reset` runs against a web session, so it is excluded
+  with the other `asc web` surfaces.
+- `asc screenshots review-approve --id` names an entry in the local review
+  manifest, and `asc reviews ratings --app` and the `asc apps public`
+  commands query the public App Store rather than the App Store Connect API.
 
-Bare `--id` flags outside the commands listed above still take bare IDs only;
-they are declared inline as `fs.String("id", ...)` and adopting
-`BindResourceIDFlag` there is the same one-line swap.
+### Completing coverage
+
+A command-level audit after the two passes above found the localization media
+set commands (`asc localizations preview-sets` and `screenshot-sets`) still
+sending a pasted link as a path segment, along with every flag built by the
+shared command builders, the bare `--id` flags, and a few resource flags
+without an `-id` suffix. They are wired the same way now:
+
+- `shared.IDGetCommandConfig` and `shared.ConfirmDeleteCommandConfig` take an
+  `IDType`, and `shared.PaginatedListCommandConfig` and
+  `shared.PricePointEqualizationsCommandConfig` take a `ParentType`. A builder
+  given a type binds its flag through `BindResourceIDFlag`; one without a type
+  keeps a plain string flag, which the guard test below rejects unless the
+  flag is an excluded one.
+- `--app` flags that read the raw value instead of calling
+  `shared.ResolveAppID` now normalize too: `asc performance download` and
+  `asc signing fetch` bind `--app` as an `apps` flag, and the commands whose
+  `--app` default comes from `ASC_APP_ID` (`asc app-setup info set`,
+  `asc app-setup categories set`, `asc categories set`) keep their plain
+  string flag, so help is unchanged, and normalize it with
+  `shared.AppIDFlagValue`. A link of another type there prints the same
+  `invalid value ... for flag -app` message and exits 2 before any request.
+
+Flags wired in this pass (382 command flags in the tree):
+
+| Command area | Flags | Resource type |
+| --- | --- | --- |
+| `asc accessibility` | `--id` | `accessibilityDeclarations` |
+| `asc actors` | `--id` | `actors` |
+| `asc age-rating` | `--id` | `ageRatingDeclarations` |
+| `asc agreements` | `--id` | `endUserLicenseAgreements` |
+| `asc app-clips` | `--id` | `appClipAdvancedExperienceImages` |
+| `asc app-clips` | `--id` | `appClipAppStoreReviewDetails` |
+| `asc app-clips` | `--id` | `appClipHeaderImages` |
+| `asc app-clips` | `--id` | `appClips` |
+| `asc app-setup` | `--primary`, `--primary-subcategory-one`, `--primary-subcategory-two`, `--secondary`, `--secondary-subcategory-one`, `--secondary-subcategory-two` | `appCategories` |
+| `asc app-setup` | `--app-info` | `appInfos` |
+| `asc app-setup` | `--price-point` | `appPricePoints` |
+| `asc app-setup` | `--version` | `appStoreVersions` |
+| `asc app-tags` | `--id` | `appTags` |
+| `asc apps` | `--app-info` | `appInfos` |
+| `asc apps` | `--id` | `apps` |
+| `asc background-assets` | `--id` | `backgroundAssetVersionAppStoreReleases` |
+| `asc background-assets` | `--id` | `backgroundAssetVersionExternalBetaReleases` |
+| `asc background-assets` | `--id` | `backgroundAssetVersionInternalBetaReleases` |
+| `asc background-assets` | `--id` | `backgroundAssets` |
+| `asc build-localizations` | `--id` | `appStoreVersionLocalizations` |
+| `asc builds` | `--id` | `buildUploadFiles` |
+| `asc builds` | `--id`, `--upload` | `buildUploads` |
+| `asc bundle-ids` | `--id` | `bundleIdCapabilities` |
+| `asc bundle-ids` | `--bundle` | `bundleIds` |
+| `asc categories` | `--primary`, `--primary-subcategory-one`, `--primary-subcategory-two`, `--secondary`, `--secondary-subcategory-one`, `--secondary-subcategory-two` | `appCategories` |
+| `asc categories` | `--app-info` | `appInfos` |
+| `asc certificates` | `--id` | `certificates` |
+| `asc devices` | `--id` | `devices` |
+| `asc diff` | `--from-version`, `--to-version`, `--version` | `appStoreVersions` |
+| `asc encryption` | `--id` | `appEncryptionDeclarationDocuments` |
+| `asc encryption` | `--declaration`, `--id` | `appEncryptionDeclarations` |
+| `asc eula` | `--id` | `endUserLicenseAgreements` |
+| `asc game-center` | `--id` | `gameCenterAchievementImages` |
+| `asc game-center` | `--id` | `gameCenterAchievementLocalizations` |
+| `asc game-center` | `--id` | `gameCenterAchievementReleases` |
+| `asc game-center` | `--id` | `gameCenterAchievementVersions` |
+| `asc game-center` | `--id` | `gameCenterAchievements` |
+| `asc game-center` | `--id` | `gameCenterActivities` |
+| `asc game-center` | `--id` | `gameCenterActivityImages` |
+| `asc game-center` | `--id` | `gameCenterActivityLocalizations` |
+| `asc game-center` | `--id` | `gameCenterActivityVersionReleases` |
+| `asc game-center` | `--id` | `gameCenterActivityVersions` |
+| `asc game-center` | `--id` | `gameCenterAppVersions` |
+| `asc game-center` | `--id` | `gameCenterChallengeImages` |
+| `asc game-center` | `--id` | `gameCenterChallengeLocalizations` |
+| `asc game-center` | `--id` | `gameCenterChallengeVersionReleases` |
+| `asc game-center` | `--id` | `gameCenterChallengeVersions` |
+| `asc game-center` | `--id` | `gameCenterChallenges` |
+| `asc game-center` | `--filter-detail`, `--id` | `gameCenterDetails` |
+| `asc game-center` | `--id` | `gameCenterGroups` |
+| `asc game-center` | `--id` | `gameCenterLeaderboardImages` |
+| `asc game-center` | `--id` | `gameCenterLeaderboardLocalizations` |
+| `asc game-center` | `--id` | `gameCenterLeaderboardReleases` |
+| `asc game-center` | `--id` | `gameCenterLeaderboardSetImages` |
+| `asc game-center` | `--id` | `gameCenterLeaderboardSetLocalizations` |
+| `asc game-center` | `--id` | `gameCenterLeaderboardSetMemberLocalizations` |
+| `asc game-center` | `--id` | `gameCenterLeaderboardSetReleases` |
+| `asc game-center` | `--id` | `gameCenterLeaderboardSetVersions` |
+| `asc game-center` | `--id` | `gameCenterLeaderboardSets` |
+| `asc game-center` | `--id` | `gameCenterLeaderboardVersions` |
+| `asc game-center` | `--id` | `gameCenterLeaderboards` |
+| `asc game-center` | `--filter-queue`, `--id` | `gameCenterMatchmakingQueues` |
+| `asc game-center` | `--id` | `gameCenterMatchmakingRuleSets` |
+| `asc game-center` | `--id` | `gameCenterMatchmakingRules` |
+| `asc game-center` | `--id` | `gameCenterMatchmakingTeams` |
+| `asc iap` | `--id` | `inAppPurchaseAvailabilities` |
+| `asc iap` | `--submission` | `reviewSubmissions` |
+| `asc localizations` | `--app-info` | `appInfos` |
+| `asc localizations` | `--id` | `appPreviewSets` |
+| `asc localizations` | `--id` | `appScreenshotSets` |
+| `asc localizations` | `--localization-id` | `appStoreVersionLocalizations` |
+| `asc localizations` | `--version` | `appStoreVersions` |
+| `asc metadata` | `--app-info` | `appInfos` |
+| `asc migrate` | `--app-info` | `appInfos` |
+| `asc nominations` | `--id` | `nominations` |
+| `asc optimize` | `--app-info` | `appInfos` |
+| `asc performance` | `--app` | `apps` |
+| `asc pre-orders` | `--availability` | `appAvailabilities` |
+| `asc pre-orders` | `--territory-availability` | `territoryAvailabilities` |
+| `asc pricing` | `--availability`, `--id` | `appAvailabilities` |
+| `asc pricing` | `--price-point` | `appPricePoints` |
+| `asc pricing` | `--id`, `--schedule` | `appPriceSchedules` |
+| `asc profiles` | `--bundle` | `bundleIds` |
+| `asc profiles` | `--id` | `profiles` |
+| `asc review` | `--id` | `appStoreReviewAttachments` |
+| `asc review` | `--id`, `--review-detail` | `appStoreReviewDetails` |
+| `asc review` | `--id` | `reviewSubmissionItems` |
+| `asc review` | `--id`, `--submission` | `reviewSubmissions` |
+| `asc reviews` | `--id` | `customerReviewResponses` |
+| `asc reviews` | `--id` | `customerReviews` |
+| `asc routing-coverage` | `--id` | `routingAppCoverages` |
+| `asc sandbox` | `--id` | `sandboxTesters` |
+| `asc screenshots` | `--id` | `appScreenshots` |
+| `asc screenshots` | `--version-localization` | `appStoreVersionLocalizations` |
+| `asc signing` | `--app` | `apps` |
+| `asc submit` | `--id` | `reviewSubmissions` |
+| `asc subscriptions` | `--id` | `subscriptionGracePeriods` |
+| `asc subscriptions` | `--id` | `subscriptionGroupLocalizations` |
+| `asc subscriptions` | `--id` | `subscriptionGroups` |
+| `asc subscriptions` | `--id` | `subscriptionImages` |
+| `asc subscriptions` | `--id` | `subscriptionIntroductoryOffers` |
+| `asc subscriptions` | `--id` | `subscriptionLocalizations` |
+| `asc subscriptions` | `--custom-code-id` | `subscriptionOfferCodeCustomCodes` |
+| `asc subscriptions` | `--offer-code-id` | `subscriptionOfferCodes` |
+| `asc subscriptions` | `--price-point` | `subscriptionPricePoints` |
+| `asc subscriptions` | `--id` | `subscriptionPromotionalOffers` |
+| `asc subscriptions` | `--id` | `subscriptionVersions` |
+| `asc subscriptions` | `--id` | `winBackOffers` |
+| `asc testflight` | `--id` | `betaAppLocalizations` |
+| `asc testflight` | `--id` | `betaAppReviewDetails` |
+| `asc testflight` | `--id` | `betaAppReviewSubmissions` |
+| `asc testflight` | `--group` | `betaGroups` |
+| `asc testflight` | `--id` | `betaLicenseAgreements` |
+| `asc testflight` | `--id` | `betaRecruitmentCriteria` |
+| `asc testflight` | `--filter-tester`, `--id` | `betaTesters` |
+| `asc testflight` | `--id` | `buildBetaDetails` |
+| `asc testflight` | `--id` | `preReleaseVersions` |
+| `asc users` | `--id` | `userInvitations` |
+| `asc users` | `--id` | `users` |
+| `asc versions` | `--id` | `appStoreVersionPhasedReleases` |
+| `asc video-previews` | `--id` | `appPreviews` |
+| `asc video-previews` | `--version-localization` | `appStoreVersionLocalizations` |
+| `asc xcode-cloud` | `--id` | `ciArtifacts` |
+| `asc xcode-cloud` | `--id` | `ciBuildActions` |
+| `asc xcode-cloud` | `--id` | `ciBuildRuns` |
+| `asc xcode-cloud` | `--id` | `ciIssues` |
+| `asc xcode-cloud` | `--id` | `ciMacOsVersions` |
+| `asc xcode-cloud` | `--id` | `ciProducts` |
+| `asc xcode-cloud` | `--id` | `ciTestResults` |
+| `asc xcode-cloud` | `--id` | `ciWorkflows` |
+| `asc xcode-cloud` | `--id` | `ciXcodeVersions` |
+| `asc xcode-cloud` | `--id` | `scmGitReferences` |
+| `asc xcode-cloud` | `--provider-id` | `scmProviders` |
+| `asc xcode-cloud` | `--id` | `scmPullRequests` |
+| `asc xcode-cloud` | `--id`, `--repo-id` | `scmRepositories` |
+
+`internal/cli/cmdtest/self_link_ids_coverage_test.go` walks the real command
+tree and fails when a flag named `id` or `*-id` is not bound to a typed
+self-link normalizer, unless it is comma-separated, is an identifier flag
+(`--bundle-id`, `--product-id`, `--vendor-id`, `--team-id`, credentials, and
+similar), sits under an excluded command tree (`asc web`,
+`asc versions rating-reset`, `asc ads`, `asc storekit`, `asc notarization`,
+`asc xcode`, `asc auth`), or has a reasoned entry in its exclusion list. A
+stale exclusion also fails the test, so the list tracks the tree.
 
 ## Alternatives considered
 
@@ -281,6 +458,14 @@ they are declared inline as `fs.String("id", ...)` and adopting
   rejection rows assert exit 2 with the flag-parse message and no request at
   all, one per resource family plus the `--id` alias, a relationship-path row,
   and an other-host row.
+- `cmdtest` coverage for the completing pass
+  (`internal/cli/cmdtest/self_link_ids_coverage_test.go`): acceptance rows
+  for the localization preview and screenshot sets, `screenshots` and
+  `video-previews` listing by localization, builder-backed Xcode Cloud and
+  offer-code commands, and representative bare `--id` reads; request-path
+  checks for the `--app` flags that bypassed `shared.ResolveAppID`; one
+  wrong-type rejection row per newly wired resource family; and the
+  command-tree guard described above.
 
 Certificate creation coverage also checks both the general and merchant-scoped
 commands: a merchant self-link becomes the bare ID in the HTTP request

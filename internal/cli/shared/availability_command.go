@@ -20,7 +20,7 @@ import (
 
 const (
 	bulkAvailabilityTimeout = 5 * time.Minute
-	bulkAvailabilityWorkers = 4
+	bulkAvailabilityWorkers = 8
 )
 
 var availabilityClientFactory = getASCClient

@@ -36,7 +36,7 @@ func NewPricingSetCommand(config PricingSetCommandConfig) *ffcli.Command {
 	fs := flag.NewFlagSet(config.FlagSetName, flag.ExitOnError)
 
 	appID := fs.String("app", "", "App Store Connect app ID (or ASC_APP_ID)")
-	pricePointID := fs.String("price-point", "", "App price point ID")
+	pricePointID := BindResourceIDFlag(fs, "price-point", "appPricePoints", "App price point ID")
 	tier := fs.Int("tier", 0, "Pricing tier number (1-based, mutually exclusive with --price-point, --price, and --free)")
 	price := fs.String("price", "", "Customer price (e.g., 0.99, mutually exclusive with --price-point, --tier, and --free) to select price point")
 	free := fs.Bool("free", false, "Set app price to Free ($0), mutually exclusive with --price-point, --tier, and --price")
@@ -167,11 +167,34 @@ func NewPricingSetCommand(config PricingSetCommandConfig) *ffcli.Command {
 				BaseTerritoryID: baseTerritoryID,
 			})
 			if err != nil {
-				return fmt.Errorf("%s: %w", config.ErrorPrefix, err)
+				return explainAppPriceScheduleConflict(err, appPriceScheduleConflictInput{
+					ErrorPrefix:        config.ErrorPrefix,
+					AppID:              resolvedAppID,
+					PricePointID:       pricePointValue,
+					PriceSelectionFlag: priceSelectionFlag(tierValue, priceValue, freeValue),
+					BaseTerritoryID:    baseTerritoryID,
+					StartDate:          normalizedStartDate,
+					StartDateDefaulted: startDateDefaulted,
+				})
 			}
 
 			return printOutput(resp, *output.Output, *output.Pretty)
 		},
+	}
+}
+
+// priceSelectionFlag names the flag the operator used to choose the price.
+// ValidatePriceSelectionFlags has already ensured exactly one is set.
+func priceSelectionFlag(tier int, price string, free bool) string {
+	switch {
+	case free:
+		return "--free"
+	case tier > 0:
+		return "--tier"
+	case price != "":
+		return "--price"
+	default:
+		return "--price-point"
 	}
 }
 

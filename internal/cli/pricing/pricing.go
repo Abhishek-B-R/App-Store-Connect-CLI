@@ -247,7 +247,7 @@ Examples:
 func PricingPricePointsGetCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("pricing price-points view", flag.ExitOnError)
 
-	pricePointID := fs.String("price-point", "", "App price point ID")
+	pricePointID := shared.BindResourceIDFlag(fs, "price-point", "appPricePoints", "App price point ID")
 	output := shared.BindOutputFlags(fs)
 
 	return &ffcli.Command{
@@ -295,6 +295,7 @@ func PricingPricePointsEqualizationsCommand() *ffcli.Command {
 		Subject:     "a price point",
 		ParentFlag:  "price-point",
 		ParentUsage: "App price point ID",
+		ParentType:  "appPricePoints",
 		LimitMax:    200,
 		ErrorPrefix: "pricing price-points equalizations",
 		FetchPage: func(ctx context.Context, client *asc.Client, pricePointID string, limit int, next string) (asc.PaginatedResponse, error) {
@@ -340,7 +341,7 @@ func PricingScheduleGetCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("pricing schedule view", flag.ExitOnError)
 
 	appID := fs.String("app", "", "App Store Connect app ID (or ASC_APP_ID)")
-	id := fs.String("id", "", "App price schedule ID")
+	id := shared.BindResourceIDFlag(fs, "id", "appPriceSchedules", "App price schedule ID")
 	output := shared.BindOutputFlags(fs)
 
 	return &ffcli.Command{
@@ -420,7 +421,7 @@ Examples:
 func PricingScheduleManualPricesCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("pricing schedule manual-prices", flag.ExitOnError)
 
-	scheduleID := fs.String("schedule", "", "App price schedule ID")
+	scheduleID := shared.BindResourceIDFlag(fs, "schedule", "appPriceSchedules", "App price schedule ID")
 	limit := fs.Int("limit", 0, "Maximum results per page (1-200)")
 	next := fs.String("next", "", "Fetch next page using a links.next URL")
 	paginate := fs.Bool("paginate", false, "Automatically fetch all pages (aggregate results)")
@@ -510,7 +511,7 @@ Examples:
 func PricingScheduleAutomaticPricesCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("pricing schedule automatic-prices", flag.ExitOnError)
 
-	scheduleID := fs.String("schedule", "", "App price schedule ID")
+	scheduleID := shared.BindResourceIDFlag(fs, "schedule", "appPriceSchedules", "App price schedule ID")
 	limit := fs.Int("limit", 0, "Maximum results per page (1-200)")
 	next := fs.String("next", "", "Fetch next page using a links.next URL")
 	paginate := fs.Bool("paginate", false, "Automatically fetch all pages (aggregate results)")
@@ -633,7 +634,7 @@ func PricingAvailabilityGetCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("pricing availability view", flag.ExitOnError)
 
 	appID := fs.String("app", "", "App Store Connect app ID (or ASC_APP_ID)")
-	id := fs.String("id", "", "App availability ID")
+	id := shared.BindResourceIDFlag(fs, "id", "appAvailabilities", "App availability ID")
 	output := shared.BindOutputFlags(fs)
 
 	return &ffcli.Command{
@@ -712,6 +713,7 @@ Examples:
   asc pricing availability territory-availabilities --next "NEXT_URL"`,
 		ParentFlag:  "availability",
 		ParentUsage: "App availability ID",
+		ParentType:  "appAvailabilities",
 		LimitMax:    200,
 		ErrorPrefix: "pricing availability territory-availabilities",
 		FetchPage: func(ctx context.Context, client *asc.Client, availabilityID string, limit int, next string) (asc.PaginatedResponse, error) {

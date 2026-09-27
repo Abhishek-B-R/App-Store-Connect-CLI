@@ -214,6 +214,31 @@ asc screenshots upload \
   --path "screenshot.png"
 ```
 
+### Code Signing on a Fresh Runner
+
+A macOS runner can create or pull its signing identity, install it in a
+dedicated keychain, point the Xcode project at the downloaded profiles, and
+produce a signed archive with `asc` alone:
+
+```bash  theme={null}
+asc signing sync pull \
+  --repo git@github.com:team/signing.git \
+  --password-file "$password_file" \
+  --output-dir .asc/signing/pulled \
+  --output json > .asc/signing/pull-result.json
+
+asc xcode signing plan \
+  --project Example.xcodeproj \
+  --profile ".asc/signing/pulled/$profile_path" \
+  --configuration Release \
+  --export-options-out .asc/artifacts/ExportOptions.plist
+```
+
+Read each `profile_path` from the `files` list in the pull receipt rather than
+guessing the store layout. See [Bootstrap a fresh CI runner](/guides/code-signing#bootstrap-a-fresh-ci-runner)
+for the first run, keychain installation, profile installation, archive,
+export, and cleanup.
+
 ### Crash and Feedback Monitoring
 
 ```bash  theme={null}

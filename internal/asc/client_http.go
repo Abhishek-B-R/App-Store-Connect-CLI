@@ -861,11 +861,13 @@ func ParseErrorWithStatus(body []byte, statusCode int) error {
 		associatedErrors := parseAssociatedErrors(errResp.Errors[0].Meta)
 		allCodes := make([]string, 0, len(errResp.Errors))
 		allDetails := make([]string, 0, len(errResp.Errors))
+		entries := make([]APIErrorEntry, 0, len(errResp.Errors))
 		for _, entry := range errResp.Errors {
 			if code := strings.TrimSpace(entry.Code); code != "" {
 				allCodes = append(allCodes, code)
 			}
 			allDetails = append(allDetails, entry.Detail)
+			entries = append(entries, APIErrorEntry{Code: strings.TrimSpace(entry.Code), Detail: entry.Detail})
 		}
 		return &APIError{
 			Code:             errResp.Errors[0].Code,
@@ -875,6 +877,7 @@ func ParseErrorWithStatus(body []byte, statusCode int) error {
 			AssociatedErrors: associatedErrors,
 			AllCodes:         allCodes,
 			AllDetails:       allDetails,
+			Entries:          entries,
 			Remediation:      remediationForAPIError(errResp.Errors[0].Code),
 		}
 	}
