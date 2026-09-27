@@ -289,6 +289,6 @@ For an archive with extensions, App Clips, Watch apps, or other embedded targets
 
 ## What the encrypted store does not do
 
-The current store uses Git. It does not renew certificates, delete stale encrypted assets, assign different settings per target, or manage the later lifecycle of installed persistent keychains. Treat those as separate reviewed operations. Renew first, push the successor identity, verify a clean pull, then revoke or deactivate; the ordering is under [Rotation and expiry](/commands/signing#rotation-and-expiry).
+The current store uses Git. It does not renew certificates, assign different settings per target, or manage the later lifecycle of installed persistent keychains. Profile renewal, device refresh, and one-type cleanup are explicit `sync push` options and `sync nuke`; see [Renew, refresh, and remove synced profiles](/commands/signing#renew-refresh-and-remove-synced-profiles). Treat those as separate reviewed operations. Renew first, push the successor identity, verify a clean pull, then revoke or deactivate; the ordering is under [Rotation and expiry](/commands/signing#rotation-and-expiry).
 
 Read the [signing command reference](/commands/signing) before the first live push; it includes file-permission rules, exact output fields, failure boundaries, profile maintenance, and recovery behavior.
