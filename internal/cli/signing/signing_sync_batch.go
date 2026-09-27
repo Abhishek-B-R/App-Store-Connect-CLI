@@ -17,29 +17,40 @@ import (
 )
 
 type signingSyncBatchOptions struct {
-	RepoURL            string
-	Branch             string
-	Password           string
-	ProfileType        string
-	CertificateType    string
-	DeviceIDs          []string
-	CreateMissing      bool
-	Identity           *signingIdentity
-	BundleIDs          []string
-	ContextWithTimeout func(context.Context) (context.Context, context.CancelFunc)
+	Transport                signingSyncTransport
+	RepoURL                  string
+	Branch                   string
+	Password                 string
+	ProfileType              string
+	CertificateType          string
+	DeviceIDs                []string
+	CreateMissing            bool
+	CreateMissingCertificate bool
+	IdentityPassword         []byte
+	Identity                 *signingIdentity
+	BundleIDs                []string
+	ContextWithTimeout       func(context.Context) (context.Context, context.CancelFunc)
+	RenewExpired             bool
+	ForceForNewDevices       bool
+	IncludeMacDevices        bool
 }
 
 type signingSyncBatchTarget struct {
-	BundleID           string
-	BundleIDResourceID string
-	ProfileType        string
-	Profile            *asc.ProfileResponse
-	Certificates       []asc.Resource[asc.CertificateAttributes]
-	ProfileCreated     bool
-	ProfileContent     []byte
-	ProfilePath        string
-	IdentityArtifacts  *signingIdentityArtifacts
-	Files              []string
+	BundleID                 string
+	BundleIDResourceID       string
+	ProfileType              string
+	Profile                  *asc.ProfileResponse
+	Certificates             []asc.Resource[asc.CertificateAttributes]
+	ProfileCreated           bool
+	ProfileContent           []byte
+	ProfilePath              string
+	IdentityArtifacts        *signingIdentityArtifacts
+	Files                    []string
+	CertificateCreationState string
+	ProfileCreationState     string
+	CertificateAttempted     bool
+	ProfileCreateAttempted   bool
+	ProfileLifecycle         *asc.SigningSyncProfileLifecycle
 }
 
 type signingSyncBatchLegacyFile struct {
@@ -48,12 +59,19 @@ type signingSyncBatchLegacyFile struct {
 	Profile      *signingpkg.EncryptedFileMetadata
 }
 
+// errSigningSyncLifecyclePreflightOnly stops a lifecycle preflight pass at
+// the first App Store Connect mutation a target would make.
+var errSigningSyncLifecyclePreflightOnly = errors.New("signing sync lifecycle preflight reached a mutation")
+
 func runSigningSyncBatch(ctx context.Context, client *asc.Client, options signingSyncBatchOptions) (SyncResult, error) {
 	if client == nil {
 		return SyncResult{}, fmt.Errorf("signing sync client is nil")
 	}
 	if len(options.BundleIDs) == 0 {
 		return SyncResult{}, fmt.Errorf("targets manifest contains no bundle IDs")
+	}
+	if options.CreateMissingCertificate && len(options.IdentityPassword) == 0 {
+		return SyncResult{}, fmt.Errorf("identity password is empty")
 	}
 	contextWithTimeout := options.ContextWithTimeout
 	if contextWithTimeout == nil {
@@ -72,26 +90,160 @@ func runSigningSyncBatch(ctx context.Context, client *asc.Client, options signin
 	if err != nil {
 		return SyncResult{}, fmt.Errorf("create temp dir: %w", err)
 	}
-	store := &signingpkg.GitStore{
-		RepoURL:  options.RepoURL,
-		LocalDir: tmpDir,
-		Branch:   options.Branch,
+	transport := options.Transport
+	if transport == nil {
+		transport = signingSyncGitTransport{repoURL: options.RepoURL, branch: options.Branch}
 	}
+	store := newSigningSyncStore(transport, tmpDir, options.RepoURL, options.Branch)
 	defer func() { _ = store.Cleanup() }()
+	identity := options.Identity
+	var createdCertificate asc.Resource[asc.CertificateAttributes]
+	certificateOutputs := &signingCertificateOutputs{BasePath: tmpDir}
+	defer func() { _ = certificateOutputs.Close() }()
+	certificateRequest := signingCertificateCreateRequest{}
+	if options.CreateMissingCertificate {
+		certificateRequest = signingCertificateCreateRequest{
+			Outputs:  certificateOutputs,
+			KeyPath:  filepath.Join(tmpDir, "created.key"),
+			CSRPath:  filepath.Join(tmpDir, "created.csr"),
+			P12Path:  filepath.Join(tmpDir, "created.p12"),
+			Password: options.IdentityPassword,
+		}
+	}
 
 	prepareRepository := onceAfterSuccess(func() error {
-		fmt.Fprintln(os.Stderr, "Cloning signing repo...")
-		return store.Clone(ctx, true)
+		return transport.Fetch(ctx, store, true)
 	})
 
 	fmt.Fprintln(os.Stderr, "Fetching signing assets from App Store Connect...")
 	targets := make([]signingSyncBatchTarget, 0, len(options.BundleIDs))
+	partial := func(err error, current []signingSyncBatchTarget) (SyncResult, error) {
+		return signingSyncBatchPartialResult(options, bundleIDs, current, identity), signingSyncBatchPublicationError(err, current)
+	}
+	// beforeProfileCreate runs every local and repository check for one
+	// target's profile creation before App Store Connect is changed.
+	beforeProfileCreate := func(bundleID string) func(profileCreatePlan) error {
+		return func(plan profileCreatePlan) error {
+			if identity != nil {
+				if err := preflightIdentityForProfileCreate(identity, plan, options.Password, time.Now()); err != nil {
+					return err
+				}
+			}
+			if err := prepareRepository(); err != nil {
+				return err
+			}
+			for _, certificate := range plan.Certificates {
+				certificateContent, err := decodeBase64Content("certificate", certificate.Attributes.CertificateContent)
+				if err != nil {
+					return err
+				}
+				relPath := filepath.Join("certs", certDirectoryName(options.ProfileType), safeFileName(certificate.Attributes.SerialNumber, certificate.ID)+".cer")
+				if _, err := preflightSigningSyncLegacyArtifact(store, relPath, certificateContent, options.Password); err != nil {
+					return fmt.Errorf("preflight certificate destination: %w", err)
+				}
+			}
+			if identity != nil {
+				artifacts, err := prepareSigningIdentityArtifacts(identity, options.Password, bundleID, options.ProfileType)
+				if err != nil {
+					return err
+				}
+				if _, err := preflightSigningArtifact(store, artifacts.IdentityPath, artifacts.IdentityData, options.Password, artifacts.IdentityMetadata, func(existing, wanted []byte) bool {
+					return samePKCS12Identity(existing, wanted, options.Password)
+				}); err != nil {
+					return fmt.Errorf("preflight signing identity: %w", err)
+				}
+				if err := preflightSigningIdentityArtifactsForContextUpdate(store, artifacts, options.Password); err != nil {
+					return fmt.Errorf("preflight signing identity context: %w", err)
+				}
+			}
+			return preflightSigningSyncBatchProfileCreate(store, plan, options.ProfileType)
+		}
+	}
+	// Every target is compared with the same enabled device set, so it is
+	// listed once before any target is resolved.
+	deviceIDs := options.DeviceIDs
+	if options.ForceForNewDevices && len(deviceIDs) == 0 && isDeviceProfileType(options.ProfileType) {
+		devicesCtx, cancelDevices := contextWithTimeout(ctx)
+		enabled, err := listEnabledProfileDeviceIDs(devicesCtx, client, options.ProfileType, options.IncludeMacDevices)
+		cancelDevices()
+		if err != nil {
+			return partial(err, targets)
+		}
+		deviceIDs = enabled
+	}
+	// A lifecycle push deletes and recreates profiles one target at a time.
+	// Resolve and preflight every target without mutations first, so a later
+	// target that fails cannot leave an earlier target's profile replaced in
+	// App Store Connect while the repository still holds the deleted one.
+	if len(bundleIDs) > 1 && (options.RenewExpired || options.ForceForNewDevices) {
+		unchanged := make([]signingSyncBatchTarget, 0, len(bundleIDs))
+		for _, bundleID := range bundleIDs {
+			requestCtx, cancelRequest := contextWithTimeout(ctx)
+			bundleIDResponse, err := findBundleID(requestCtx, client, bundleID)
+			cancelRequest()
+			if err != nil {
+				return partial(fmt.Errorf("resolve bundle ID %s: %w", bundleID, err), targets)
+			}
+			planCtx, cancelPlan := contextWithTimeout(ctx)
+			profile, certificates, _, err := resolveSigningAssets(planCtx, client, signingAssetsOptions{
+				BundleIDResourceID:       bundleIDResponse.Data.ID,
+				BundleIdentifier:         bundleID,
+				ProfileType:              options.ProfileType,
+				ProfileName:              profileCreateNameForTarget(options.ProfileType, bundleID, time.Now()),
+				CertificateType:          options.CertificateType,
+				DeviceIDs:                deviceIDs,
+				CreateMissing:            options.CreateMissing,
+				CreateMissingCertificate: options.CreateMissingCertificate,
+				Progress:                 &signingAssetsProgress{},
+				// The certificate the real pass would create changes how
+				// later targets resolve, so it cannot be preflighted here.
+				BeforeCertificateCreate: func(profileCreatePlan) error {
+					return errors.New("a multi-target --renew-expired or --force-for-new-devices push cannot create a certificate; create it with a single-target push first")
+				},
+				BeforeCreate: func(plan profileCreatePlan) error {
+					if err := beforeProfileCreate(bundleID)(plan); err != nil {
+						return err
+					}
+					return errSigningSyncLifecyclePreflightOnly
+				},
+				CertificateFilter:  identityCertificateFilter(identity),
+				RenewExpired:       options.RenewExpired,
+				ForceForNewDevices: options.ForceForNewDevices,
+				IncludeMacDevices:  options.IncludeMacDevices,
+			})
+			cancelPlan()
+			switch {
+			case errors.Is(err, errSigningSyncLifecyclePreflightOnly):
+				// BeforeCreate already checked this target's replacement.
+			case err != nil:
+				return partial(fmt.Errorf("resolve signing assets for %s: %w", bundleID, err), targets)
+			default:
+				unchanged = append(unchanged, signingSyncBatchTarget{
+					BundleID:     bundleID,
+					ProfileType:  options.ProfileType,
+					Profile:      profile,
+					Certificates: certificates.Data,
+				})
+			}
+		}
+		// Targets that keep their profile skip BeforeCreate, so their
+		// artifacts are checked here with the same repository preflight
+		// the publication step runs.
+		if len(unchanged) > 0 {
+			if err := prepareRepository(); err != nil {
+				return partial(err, targets)
+			}
+			if _, _, err := preflightSigningSyncBatchRepository(store, unchanged, identity, options.Password); err != nil {
+				return partial(err, targets)
+			}
+		}
+	}
 	for _, bundleID := range bundleIDs {
 		requestCtx, cancelRequest := contextWithTimeout(ctx)
 		bundleIDResponse, err := findBundleID(requestCtx, client, bundleID)
 		if err != nil {
 			cancelRequest()
-			return SyncResult{}, signingSyncBatchPublicationError(
+			return partial(
 				fmt.Errorf("resolve bundle ID %s: %w", bundleID, err),
 				targets,
 			)
@@ -99,127 +251,129 @@ func runSigningSyncBatch(ctx context.Context, client *asc.Client, options signin
 		cancelRequest()
 
 		assetCtx, cancelAssets := contextWithTimeout(ctx)
+		var createdIdentity createdSigningIdentity
+		progress := &signingAssetsProgress{}
 		profile, certificates, created, err := resolveSigningAssets(
 			assetCtx,
 			client,
 			signingAssetsOptions{
-				BundleIDResourceID: bundleIDResponse.Data.ID,
-				BundleIdentifier:   bundleID,
-				ProfileType:        options.ProfileType,
-				ProfileName:        profileCreateNameForTarget(options.ProfileType, bundleID, time.Now()),
-				CertificateType:    options.CertificateType,
-				DeviceIDs:          options.DeviceIDs,
-				CreateMissing:      options.CreateMissing,
-				BeforeCreate: func(plan profileCreatePlan) error {
-					if options.Identity != nil {
-						if err := preflightIdentityForProfileCreate(options.Identity, plan, options.Password, time.Now()); err != nil {
-							return err
-						}
+				BundleIDResourceID:       bundleIDResponse.Data.ID,
+				BundleIdentifier:         bundleID,
+				ProfileType:              options.ProfileType,
+				ProfileName:              profileCreateNameForTarget(options.ProfileType, bundleID, time.Now()),
+				CertificateType:          options.CertificateType,
+				DeviceIDs:                deviceIDs,
+				CreateMissing:            options.CreateMissing,
+				CreateMissingCertificate: options.CreateMissingCertificate,
+				CertificateCreate:        certificateRequest,
+				CreatedIdentity:          &createdIdentity,
+				CertificateFallback:      &createdCertificate,
+				CreatedCertificate:       &createdCertificate,
+				Progress:                 progress,
+				AfterCertificateCreate: func(created createdSigningIdentity) error {
+					if identity != nil {
+						return fmt.Errorf("--create-missing-certificate cannot replace an existing signing identity")
+					}
+					loaded, loadErr := loadPKCS12Identity(created.P12Path, string(options.IdentityPassword), "")
+					if loadErr != nil {
+						return loadErr
+					}
+					identity = loaded
+					return nil
+				},
+				BeforeCertificateCreate: func(plan profileCreatePlan) error {
+					if err := certificateOutputs.Prepare([]string{certificateRequest.KeyPath, certificateRequest.CSRPath, certificateRequest.P12Path}, false); err != nil {
+						return err
 					}
 					if err := prepareRepository(); err != nil {
 						return err
 					}
-					for _, certificate := range plan.Certificates {
-						certificateContent, err := decodeBase64Content("certificate", certificate.Attributes.CertificateContent)
-						if err != nil {
-							return err
-						}
-						relPath := filepath.Join("certs", certDirectoryName(options.ProfileType), safeFileName(certificate.Attributes.SerialNumber, certificate.ID)+".cer")
-						if _, err := preflightSigningSyncLegacyArtifact(store, relPath, certificateContent, options.Password); err != nil {
-							return fmt.Errorf("preflight certificate destination: %w", err)
-						}
-					}
-					if options.Identity != nil {
-						artifacts, err := prepareSigningIdentityArtifacts(options.Identity, options.Password, bundleID, options.ProfileType)
-						if err != nil {
-							return err
-						}
-						if _, err := preflightSigningArtifact(store, artifacts.IdentityPath, artifacts.IdentityData, options.Password, artifacts.IdentityMetadata, func(existing, wanted []byte) bool {
-							return samePKCS12Identity(existing, wanted, options.Password)
-						}); err != nil {
-							return fmt.Errorf("preflight signing identity: %w", err)
-						}
-						if err := preflightSigningIdentityArtifactsForContextUpdate(store, artifacts, options.Password); err != nil {
-							return fmt.Errorf("preflight signing identity context: %w", err)
-						}
-					}
-					return preflightSigningSyncBatchProfileCreate(store, plan, options.ProfileType)
+					profileExtension := shared.ProvisioningProfileExtension("", options.ProfileType)
+					profilePath := filepath.Join("profiles", profileDirectoryName(options.ProfileType), safeFileName(plan.ProfileName, "profile")+profileExtension)
+					return preflightSigningAssetDestinationsForProfile(store, plan, options.ProfileType, profilePath)
 				},
+				BeforeCreate: beforeProfileCreate(bundleID),
 				CreateContext: func() (context.Context, context.CancelFunc) {
 					return contextWithTimeout(ctx)
 				},
-				CertificateFilter: identityCertificateFilter(options.Identity),
+				CertificateFilter:  identityCertificateFilter(identity),
+				RenewExpired:       options.RenewExpired,
+				ForceForNewDevices: options.ForceForNewDevices,
+				IncludeMacDevices:  options.IncludeMacDevices,
 			},
 		)
 		cancelAssets()
 		if err != nil {
-			return SyncResult{}, signingSyncBatchPublicationError(
+			candidateTargets := append([]signingSyncBatchTarget(nil), targets...)
+			if createdIdentity.CertificateAttempted || progress.ProfileCreateAttempted || progress.ReplacementAttempted {
+				candidate := signingSyncBatchTarget{
+					BundleID:               bundleID,
+					BundleIDResourceID:     bundleIDResponse.Data.ID,
+					ProfileType:            options.ProfileType,
+					Certificates:           append([]asc.Resource[asc.CertificateAttributes](nil), progress.Certificates...),
+					CertificateAttempted:   createdIdentity.CertificateAttempted,
+					ProfileCreateAttempted: progress.ProfileCreateAttempted,
+					ProfileLifecycle:       progress.Lifecycle,
+				}
+				switch {
+				case createdIdentity.CertificateID != "" && createdIdentity.P12Path != "":
+					candidate.CertificateCreationState = "created"
+				case createdIdentity.CertificateAttempted:
+					candidate.CertificateCreationState = "unknown"
+				case options.CreateMissingCertificate:
+					candidate.CertificateCreationState = "reused"
+				}
+				if progress.ProfileCreateAttempted {
+					candidate.ProfileCreationState = "unknown"
+				}
+				candidateTargets = append(candidateTargets, candidate)
+			}
+			return partial(
 				fmt.Errorf("resolve signing assets for %s: %w", bundleID, err),
-				targets,
+				candidateTargets,
 			)
 		}
 		if created {
 			fmt.Fprintf(os.Stderr, "Created new profile for %s\n", bundleID)
 		}
+		reportSigningProfileLifecycle(bundleID, progress.Lifecycle)
 
 		target := signingSyncBatchTarget{
-			BundleID:           bundleID,
-			BundleIDResourceID: bundleIDResponse.Data.ID,
-			ProfileType:        options.ProfileType,
-			Profile:            profile,
-			Certificates:       certificates.Data,
-			ProfileCreated:     created,
+			BundleID:             bundleID,
+			BundleIDResourceID:   bundleIDResponse.Data.ID,
+			ProfileType:          options.ProfileType,
+			Profile:              profile,
+			Certificates:         certificates.Data,
+			ProfileCreated:       created,
+			CertificateAttempted: createdIdentity.CertificateAttempted,
+			ProfileLifecycle:     progress.Lifecycle,
 		}
-		if options.Identity != nil {
-			if err := validateIdentityForResolvedAssets(options.Identity, profile, certificates, bundleID, options.ProfileType, time.Now()); err != nil {
+		if createdIdentity.CertificateID != "" && createdIdentity.P12Path != "" {
+			target.CertificateCreationState = "created"
+		} else if options.CreateMissingCertificate {
+			target.CertificateCreationState = "reused"
+		}
+		if created {
+			target.ProfileCreationState = "created"
+		} else if options.CreateMissing {
+			target.ProfileCreationState = "reused"
+		}
+		if identity != nil {
+			if err := validateIdentityForResolvedAssets(identity, profile, certificates, bundleID, options.ProfileType, time.Now()); err != nil {
 				candidateTargets := append(append([]signingSyncBatchTarget(nil), targets...), target)
-				return SyncResult{}, signingSyncBatchPublicationError(fmt.Errorf("validate signing identity for %s: %w", bundleID, err), candidateTargets)
+				return partial(fmt.Errorf("validate signing identity for %s: %w", bundleID, err), candidateTargets)
 			}
 		}
 		targets = append(targets, target)
 	}
 
 	if err := prepareRepository(); err != nil {
-		return SyncResult{}, signingSyncBatchPublicationError(err, targets)
+		return partial(err, targets)
 	}
 
-	legacyFiles, identityCore, err := prepareSigningSyncBatchFiles(store, targets, options.Identity, options.Password)
+	legacyFiles, identityCore, err := preflightSigningSyncBatchRepository(store, targets, identity, options.Password)
 	if err != nil {
-		return SyncResult{}, signingSyncBatchPublicationError(err, targets)
-	}
-
-	plannedPaths := make([]string, 0, len(legacyFiles)+len(targets)*2)
-	for _, file := range legacyFiles {
-		plannedPaths = append(plannedPaths, file.RelativePath)
-	}
-	for _, target := range targets {
-		if target.IdentityArtifacts == nil {
-			continue
-		}
-		plannedPaths = append(plannedPaths, target.IdentityArtifacts.IdentityPath, target.IdentityArtifacts.BindingPath)
-	}
-	if err := store.CheckEncryptedRepositoryPaths(plannedPaths); err != nil {
-		return SyncResult{}, signingSyncBatchPublicationError(fmt.Errorf("preflight repository paths: %w", err), targets)
-	}
-
-	for _, file := range legacyFiles {
-		var err error
-		if file.Profile != nil {
-			_, err = preflightSigningProfileArtifact(store, file.RelativePath, file.Plaintext, options.Password, *file.Profile)
-		} else {
-			_, err = preflightSigningSyncLegacyArtifact(store, file.RelativePath, file.Plaintext, options.Password)
-		}
-		if err != nil {
-			return SyncResult{}, signingSyncBatchPublicationError(fmt.Errorf("preflight %s: %w", file.RelativePath, err), targets)
-		}
-	}
-	for _, target := range targets {
-		if target.IdentityArtifacts == nil {
-			continue
-		}
-		if err := preflightSigningIdentityArtifactsForContextUpdate(store, target.IdentityArtifacts, options.Password); err != nil {
-			return SyncResult{}, signingSyncBatchPublicationError(fmt.Errorf("preflight signing identity for %s: %w", target.BundleID, err), targets)
-		}
+		return partial(err, targets)
 	}
 
 	for _, file := range legacyFiles {
@@ -230,7 +384,7 @@ func runSigningSyncBatch(ctx context.Context, client *asc.Client, options signin
 			err = writeOrReuseSigningSyncLegacyArtifact(store, file.RelativePath, file.Plaintext, options.Password)
 		}
 		if err != nil {
-			return SyncResult{}, signingSyncBatchPublicationError(fmt.Errorf("encrypt %s: %w", file.RelativePath, err), targets)
+			return partial(fmt.Errorf("encrypt %s: %w", file.RelativePath, err), targets)
 		}
 		fmt.Fprintf(os.Stderr, "  Encrypted %s\n", file.RelativePath)
 	}
@@ -239,49 +393,138 @@ func runSigningSyncBatch(ctx context.Context, client *asc.Client, options signin
 			continue
 		}
 		if err := writeOrReuseSigningIdentityArtifacts(store, target.IdentityArtifacts, options.Password); err != nil {
-			return SyncResult{}, signingSyncBatchPublicationError(fmt.Errorf("encrypt signing identity for %s: %w", target.BundleID, err), targets)
+			return partial(fmt.Errorf("encrypt signing identity for %s: %w", target.BundleID, err), targets)
 		}
 		fmt.Fprintf(os.Stderr, "  Encrypted %s\n", target.IdentityArtifacts.IdentityPath)
 		fmt.Fprintf(os.Stderr, "  Encrypted %s\n", target.IdentityArtifacts.BindingPath)
 	}
 
+	for _, target := range targets {
+		replacedID := signingLifecycleReplacedProfileID(target.ProfileLifecycle)
+		if replacedID == "" {
+			continue
+		}
+		removed, err := removeSupersededProfileArtifacts(store, options.Password, target.BundleID, target.ProfileType, replacedID, target.ProfilePath)
+		if err != nil {
+			return partial(fmt.Errorf("remove replaced profile artifacts for %s: %w", target.BundleID, err), targets)
+		}
+		for _, path := range removed {
+			fmt.Fprintf(os.Stderr, "  Removed %s\n", path)
+		}
+	}
+
 	commitMessage := fmt.Sprintf("Update signing assets for %s (%d targets)", options.ProfileType, len(targets))
-	fmt.Fprintln(os.Stderr, "Pushing to git...")
-	if err := store.CommitAndPush(ctx, commitMessage); err != nil {
-		return SyncResult{}, signingSyncBatchPublicationError(err, targets)
+	if err := transport.Publish(ctx, store, commitMessage); err != nil {
+		return partial(err, targets)
 	}
 	fmt.Fprintln(os.Stderr, "Done")
 
 	result := SyncResult{
 		Operation:       "push",
-		RepoURL:         sanitizeRepoURLForOutput(options.RepoURL),
+		RepoURL:         transport.Locator(),
+		Storage:         transport.Storage(),
 		ProfileType:     options.ProfileType,
 		Files:           make([]string, 0),
-		IdentityPresent: options.Identity != nil,
+		IdentityPresent: identity != nil,
 		Targets:         make([]SyncTargetResult, 0, len(targets)),
 		BundleIDs:       bundleIDs,
 	}
 	result.MarkBatch()
-	if options.Identity != nil {
-		result.IdentitySHA256 = options.Identity.CertificateSHA256
+	if identity != nil {
+		result.IdentitySHA256 = identity.CertificateSHA256
 		if identityCore != "" {
 			result.SensitiveFiles = []string{identityCore}
 		}
 	}
+	for _, target := range targets {
+		result.CertificateIDs = append(result.CertificateIDs, extractIDs(target.Certificates)...)
+		result.CertificateCreationState = mergeSigningCreationState(result.CertificateCreationState, target.CertificateCreationState)
+		result.ProfileCreationState = mergeSigningCreationState(result.ProfileCreationState, target.ProfileCreationState)
+	}
+	result.CertificateIDs = uniqueSortedSigningSyncStrings(result.CertificateIDs)
 
 	for _, target := range targets {
 		files := uniqueSortedSigningSyncStrings(target.Files)
 		result.Targets = append(result.Targets, SyncTargetResult{
-			BundleID:       target.BundleID,
-			ProfileType:    target.ProfileType,
-			ProfilePath:    target.ProfilePath,
-			ProfileCreated: target.ProfileCreated,
-			Files:          files,
+			BundleID:                 target.BundleID,
+			ProfileType:              target.ProfileType,
+			ProfilePath:              target.ProfilePath,
+			ProfileCreated:           target.ProfileCreated,
+			CertificateCreationState: target.CertificateCreationState,
+			ProfileCreationState:     target.ProfileCreationState,
+			Files:                    files,
+			ProfileLifecycle:         target.ProfileLifecycle,
 		})
 		result.Files = append(result.Files, files...)
 	}
 	result.Files = uniqueSortedSigningSyncStrings(result.Files)
 	return result, nil
+}
+
+func signingSyncBatchPartialResult(options signingSyncBatchOptions, bundleIDs []string, targets []signingSyncBatchTarget, identity *signingIdentity) SyncResult {
+	locator := sanitizeRepoURLForOutput(options.RepoURL)
+	storage := gitSigningSyncStorage(options.RepoURL, options.Branch)
+	if options.Transport != nil {
+		locator = options.Transport.Locator()
+		storage = options.Transport.Storage()
+	}
+	result := SyncResult{
+		Operation:       "push",
+		RepoURL:         locator,
+		Storage:         storage,
+		ProfileType:     options.ProfileType,
+		Files:           []string{},
+		IdentityPresent: identity != nil,
+		BundleIDs:       append([]string(nil), bundleIDs...),
+		Targets:         make([]SyncTargetResult, 0, len(targets)),
+		Partial:         len(targets) > 0,
+	}
+	result.MarkBatch()
+	if identity != nil {
+		result.IdentitySHA256 = identity.CertificateSHA256
+	}
+	for _, target := range targets {
+		files := uniqueSortedSigningSyncStrings(target.Files)
+		result.Targets = append(result.Targets, SyncTargetResult{
+			BundleID:                 target.BundleID,
+			ProfileType:              target.ProfileType,
+			ProfilePath:              target.ProfilePath,
+			ProfileCreated:           target.ProfileCreated,
+			CertificateCreationState: target.CertificateCreationState,
+			ProfileCreationState:     target.ProfileCreationState,
+			Files:                    files,
+			ProfileLifecycle:         target.ProfileLifecycle,
+		})
+		result.Files = append(result.Files, files...)
+		result.CertificateIDs = append(result.CertificateIDs, extractIDs(target.Certificates)...)
+		result.CertificateCreationState = mergeSigningCreationState(result.CertificateCreationState, target.CertificateCreationState)
+		result.ProfileCreationState = mergeSigningCreationState(result.ProfileCreationState, target.ProfileCreationState)
+	}
+	result.Files = uniqueSortedSigningSyncStrings(result.Files)
+	result.CertificateIDs = uniqueSortedSigningSyncStrings(result.CertificateIDs)
+	if result.Partial {
+		result.PublicationState = "unknown"
+		if result.ProfileCreationState == "" {
+			result.ProfileCreationState = "unknown"
+		}
+		if options.CreateMissingCertificate && result.CertificateCreationState == "" {
+			result.CertificateCreationState = "unknown"
+		}
+	}
+	return result
+}
+
+func mergeSigningCreationState(current, next string) string {
+	if current == "unknown" || next == "unknown" {
+		return "unknown"
+	}
+	if current == "created" || next == "created" {
+		return "created"
+	}
+	if current == "reused" || next == "reused" {
+		return "reused"
+	}
+	return current
 }
 
 func signingSyncBatchPublicationError(err error, targets []signingSyncBatchTarget) error {
@@ -294,6 +537,49 @@ func signingSyncBatchPublicationError(err error, targets []signingSyncBatchTarge
 		}
 	}
 	return err
+}
+
+// preflightSigningSyncBatchRepository prepares every encrypted artifact for
+// the resolved targets and checks each repository destination without
+// writing. It fills each target's repository paths and files.
+func preflightSigningSyncBatchRepository(store *signingpkg.GitStore, targets []signingSyncBatchTarget, identity *signingIdentity, password string) ([]signingSyncBatchLegacyFile, string, error) {
+	legacyFiles, identityCore, err := prepareSigningSyncBatchFiles(store, targets, identity, password)
+	if err != nil {
+		return nil, "", err
+	}
+	plannedPaths := make([]string, 0, len(legacyFiles)+len(targets)*2)
+	for _, file := range legacyFiles {
+		plannedPaths = append(plannedPaths, file.RelativePath)
+	}
+	for _, target := range targets {
+		if target.IdentityArtifacts == nil {
+			continue
+		}
+		plannedPaths = append(plannedPaths, target.IdentityArtifacts.IdentityPath, target.IdentityArtifacts.BindingPath)
+	}
+	if err := store.CheckEncryptedRepositoryPaths(plannedPaths); err != nil {
+		return nil, "", fmt.Errorf("preflight repository paths: %w", err)
+	}
+	for _, file := range legacyFiles {
+		var err error
+		if file.Profile != nil {
+			_, err = preflightSigningProfileArtifact(store, file.RelativePath, file.Plaintext, password, *file.Profile)
+		} else {
+			_, err = preflightSigningSyncLegacyArtifact(store, file.RelativePath, file.Plaintext, password)
+		}
+		if err != nil {
+			return nil, "", fmt.Errorf("preflight %s: %w", file.RelativePath, err)
+		}
+	}
+	for _, target := range targets {
+		if target.IdentityArtifacts == nil {
+			continue
+		}
+		if err := preflightSigningIdentityArtifactsForContextUpdate(store, target.IdentityArtifacts, password); err != nil {
+			return nil, "", fmt.Errorf("preflight signing identity for %s: %w", target.BundleID, err)
+		}
+	}
+	return legacyFiles, identityCore, nil
 }
 
 func prepareSigningSyncBatchFiles(store *signingpkg.GitStore, targets []signingSyncBatchTarget, identity *signingIdentity, password string) ([]signingSyncBatchLegacyFile, string, error) {

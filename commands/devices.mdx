@@ -94,14 +94,28 @@ asc devices register --name "My Mac" --udid-from-system --platform MAC_OS
 
 **Flags:**
 
-* `--name` - Device name (required)
-* `--udid` - Device UDID (required unless `--udid-from-system`)
+* `--name` - Device name (required for direct registration; defaults to the product and short UDID with `--via-url`)
+* `--udid` - Device UDID (required unless `--udid-from-system` or `--via-url`)
 * `--udid-from-system` - Use local macOS hardware UUID as UDID (macOS only)
-* `--platform` - Device platform: `IOS`, `MAC_OS`, `TV_OS`, `VISION_OS` (required)
+* `--platform` - Device platform: `IOS`, `MAC_OS`, `UNIVERSAL` (defaults to `IOS` with `--via-url`)
 * `--output` - Output format: `json`, `table`, `markdown`
 * `--pretty` - Pretty-print JSON output
 
 **Note:** `--udid` and `--udid-from-system` are mutually exclusive.
+
+Use `--via-url` when a remote tester cannot copy a UDID. The command prints a loopback URL and a registration hint on stderr. The profile is unsigned, so iOS shows it as Not Verified. Use a trusted HTTPS tunnel for remote iOS devices and pass its origin URL (without a path prefix) as `--public-url`. If using a LAN address, the listener must also bind an interface the device can reach with an explicit `--listen`. Without `--confirm`, devices are written to a tab-separated `--output-file` that `devices register-batch` can read. `--listen` stays on a loopback address unless you explicitly bind another host.
+
+The registration URL is a bearer credential: share it only with intended testers. It stays usable until the server stops so several testers can open the same URL or QR code, but it cannot register a device by itself. Each profile download embeds its own unguessable, single-use callback token. That token is bound to the first device that reports with it and is spent once that device is recorded, so a replayed callback URL is refused and cannot add another device. Callbacks that use the registration URL token, an unknown token, or a spent token are refused. Signed CMS callbacks are checked for signature integrity, but this command does not validate an Apple device certificate chain or attest device identity. API failures can be retried from the same device without restarting the session; successful registrations are deduplicated.
+
+`--ttl` must be positive. The command collects until that duration expires or it is interrupted, then writes one summary to stdout. The callback API requests use `ASC_TIMEOUT` and are canceled when the session ends. Keep `--output-file` for collect-only mode; it cannot be combined with `--confirm`.
+
+Add `--stream` with `--output json` to also write one JSON receipt line to stdout as each device arrives. Each line has the same fields as an entry in the summary's `devices` or `failures` arrays (`name`, `udid`, `platform`, `status`, and `deviceId` or `error` when set). `status` is `registered`, `collected`, `skipped`, or `failed`; a failed device that later retries successfully gets another line. The final summary follows as the last line. `--stream` cannot be combined with table or Markdown output or `--pretty`.
+
+```bash theme={null}
+asc devices register --via-url --output-file ./devices.tsv --ttl 30m
+asc devices register --via-url --confirm --platform IOS --public-url "https://tunnel.example"
+asc devices register --via-url --confirm --stream --output json --public-url "https://tunnel.example"
+```
 
 ### devices update
 
