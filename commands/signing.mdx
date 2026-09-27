@@ -23,7 +23,11 @@ Apple code signing has four separate pieces:
 | Encrypt one app's signing assets and local private identity in Git | `asc signing sync push --bundle-id ...` |
 | Sync one shared identity across an app and its embedded targets | `asc signing sync push --targets-file ...` |
 | Decrypt signing assets on another machine or CI worker | `asc signing sync pull` |
-| Re-encrypt the repository with a replacement password | `asc signing sync rotate-password --confirm` |
+| Keep the encrypted signing assets in an S3 or S3-compatible bucket | `asc signing sync push --storage object --object-bucket ...` |
+| Re-encrypt the store with a replacement password | `asc signing sync rotate-password --confirm` |
+| Replace an expired synced profile with a same-name profile | `asc signing sync push --renew-expired ...` |
+| Recreate a development or ad hoc profile after the device list changes | `asc signing sync push --force-for-new-devices ...` |
+| Delete every profile of one type, revoke its certificates, and remove their encrypted files | `asc signing sync nuke --confirm` |
 | Plan profiles for every target in an iOS archive and an exact device set | `asc signing reconcile plan` |
 | Apply an approved reconciliation plan | `asc signing reconcile apply --confirm` |
 | Re-sign an existing IPA | `asc signing resign` |
@@ -455,6 +459,38 @@ Native Mac and Mac Catalyst profiles can have the same signed platform and distr
 
 Single-target JSON reports `bundleId` and `profileType`. Multi-target JSON reports `bundleIds` plus one `targets` entry per bundle. A target can report multiple `profilePaths` when the store contains more than one active matching profile; `profilePath` remains the first deterministic path for compatibility with the existing target result shape. `files`, `sensitiveFiles`, and `identityPresent` describe only the selected output.
 
+### Object storage
+
+`--storage object` keeps the encrypted artifacts in an S3 bucket, or in an S3-compatible service with `--object-endpoint`, instead of a Git repository. `push`, `pull`, and `rotate-password` accept it.
+
+```bash  theme={null}
+asc signing sync push \
+  --bundle-id com.example.app \
+  --profile-type IOS_APP_STORE \
+  --storage object \
+  --object-bucket team-certs \
+  --object-prefix asc/ \
+  --password-file ~/.config/asc/signing-sync-password \
+  --identity .asc/secrets/distribution.p12 \
+  --identity-password-file .asc/secrets/distribution-p12-password \
+  --output json
+
+asc signing sync pull \
+  --storage object \
+  --object-bucket team-certs \
+  --object-prefix asc/ \
+  --password-file ~/.config/asc/signing-sync-password \
+  --output-dir .asc/signing/pulled \
+  --output json
+```
+
+- `--object-bucket` is required. `--object-prefix` scopes the keys (default: the bucket root), `--object-region` overrides the configured region, and `--object-endpoint` takes the HTTPS origin of an S3-compatible service, which is then addressed path-style.
+- Object keys use the Git tree's layout, `<prefix>/<encrypted path>.enc`, so a bucket prefix and a signing repository can be mirrored byte for byte. Encryption, path checks, and size limits are the same as for Git.
+- No flag accepts a cloud credential. Credentials and, unless `--object-region` is set, the region come from the standard AWS configuration chain: environment variables, shared config or SSO profiles, web identity for CI workload identity, and container or instance metadata. A missing region fails before any request.
+- Writes are conditional. Push creates new objects only if they do not exist and replaces an existing object only if it still matches the version it fetched, so a concurrent writer makes the push exit 1 instead of overwriting newer data; pull and retry. Push never deletes objects, and a multi-artifact push that hits a conflict can leave the artifacts before the conflict published. A service that ignores `If-Match` and `If-None-Match` loses this protection.
+- Git-only flags (`--repo`, `--branch`) and the `--prefix`, `--region`, and `--gitlab-*` flags of the other stores are usage errors (exit 2) with `--storage object`. Profile renewal, device refresh, and `sync nuke` also require Git storage.
+- Receipts report `repoUrl` and `storage.location` as `s3://<bucket>/<prefix>`, without any custom endpoint host, and `storage.kind` as `object`. Git receipts add `storage.branch`.
+
 ### Install a persistent signing keychain
 
 Use `signing run` when an identity should exist only for one child command. Use
@@ -561,7 +597,7 @@ asc signing keychain delete \
 ### Rotate the repository password
 
 Prepare the replacement secret in a separate protected file, distribute it to
-dependent machines and CI secret stores, and then rotate the selected branch:
+dependent machines and CI secret stores, and then rotate the store. For Git, pass the repository:
 
 ```bash  theme={null}
 umask 077
@@ -592,9 +628,84 @@ rewrite Git history: the previous password can still decrypt matching artifacts
 from older commits. If the password was exposed, also rotate repository access
 and follow your team's history-retention procedure.
 
+For object storage, pass `--storage object` with the same `--object-*` flags instead of `--repo`:
+
+```bash  theme={null}
+asc signing sync rotate-password \
+  --storage object \
+  --object-bucket team-certs \
+  --object-prefix asc/ \
+  --password-file ~/.config/asc/signing-sync-password \
+  --new-password-file ~/.config/asc/signing-sync-password-next \
+  --confirm \
+  --output json
+```
+
+A bucket cannot replace several objects atomically, so rotation stages the new set first. Every re-encrypted artifact is written to a staged key, `<key>.asc-rotation-<id>`, which pulls ignore; a staging failure removes the staged objects and changes no live artifact. Rotation then checks that every live object still matches the version it fetched, so a concurrent push aborts it before any live write. Finally, each live object is replaced conditionally. If one replacement fails, the artifacts already replaced are restored and every artifact keeps the current password. If restoring also fails, or the process is killed during the swap, the store can be mixed: the error lists the artifacts that use the new password and the staged objects are kept, and because they hold the complete new set, copying each one over its live key finishes the rotation. Staged objects are deleted after a successful rotation; any that cannot be deleted are reported on stderr and are safe to remove.
+
+### Renew, refresh, and remove synced profiles
+
+Renewal and device refresh require `--storage git`, and `sync nuke` works only
+with a Git repository, so each replaced or removed encrypted artifact leaves
+the repository in one reviewed commit. A multi-target push resolves and checks
+every target before it replaces any profile, and it cannot create a
+certificate in the same run.
+
+`push --renew-expired` applies only when no active profile of `--profile-type`
+exists. It deletes the most recently expired profile, creates a same-name
+successor with the active, unexpired certificates, and removes the superseded
+encrypted profile. An active profile is reused unchanged. With neither an
+active nor an expired profile, push reports the usual missing-profile error
+unless `--create-missing` is also set.
+
+`push --force-for-new-devices` compares the devices of a development or ad hoc
+profile with `--device`, or with every enabled device of that profile type. An
+unchanged set leaves the profile alone. A different set deletes the profile
+and recreates it with the same name and certificates. Other profile types exit
+2. `--include-mac-in-profiles` adds enabled Apple silicon Macs to
+`IOS_APP_DEVELOPMENT` and `IOS_APP_ADHOC` device sets; App Store Connect has no
+separate Mac-inclusion attribute on profiles, so the option works through the
+device list, requires `--force-for-new-devices`, and cannot be combined with
+`--device`.
+
+```bash  theme={null}
+asc signing sync push \
+  --bundle-id com.example.app \
+  --profile-type IOS_APP_ADHOC \
+  --force-for-new-devices \
+  --repo git@github.com:team/signing.git \
+  --password-file ~/.config/asc/signing-sync-password
+```
+
+The push receipt adds a `profileLifecycle` object (per target in multi-target
+JSON) with `action` (`unchanged`, `renewed`, or `devices-refreshed`), the new
+and replaced profile IDs, `replacedProfileState`, `devicesAdded`, and
+`devicesRemoved`.
+
+`sync nuke` deletes every profile of `--profile-type`, revokes every
+certificate of `--certificate-type` (inferred from the profile type when
+omitted), and removes their encrypted artifacts in one commit. Profiles of other
+types are never deleted, but revoking a shared development or distribution
+certificate invalidates every other profile that embeds it. Preview first:
+
+```bash  theme={null}
+asc signing sync nuke \
+  --profile-type IOS_APP_DEVELOPMENT \
+  --repo git@github.com:team/signing.git \
+  --password-file ~/.config/asc/signing-sync-password \
+  --dry-run
+```
+
+`--dry-run` prints the plan and changes nothing; otherwise `--confirm` is
+required. Nuke authenticates the whole repository before any App Store Connect
+change, deletes profiles, then revokes certificates. A failure does not stop
+the remaining operations: the receipt lists each failure, keeps the encrypted
+artifacts of anything not confirmed deleted or revoked, and the command exits
+1.
+
 ### Current sync scope
 
-`--storage` selects where the encrypted artifacts live: `git` (the default, with `--repo`), or the experimental `gitlab-secure-files` (`--gitlab-project`, `--prefix`, `--gitlab-token-file`) and `aws-secrets-manager` (`--region`, `--prefix`, credentials from the standard AWS environment) stores. Every store holds the same ciphertext; encryption and path validation do not change. `sync rotate-password` supports only Git. A generic object-storage backend is planned but not available yet. Push applies one profile configuration and one identity across its selected targets; it does not accept per-target profile types or device sets. Pull selectors similarly use one profile type per invocation. Certificate renewal and stale encrypted-store deletion remain explicit operator work; [Rotation and expiry](#rotation-and-expiry) has the ordering. Dedicated persistent keychain installation is separate from sync, creates a new keychain for one identity per invocation, and leaves provisioning-profile installation as an independent operation.
+`--storage` selects where the encrypted artifacts live: `git` (the default, with `--repo`), `object` (`--object-bucket`, optional `--object-prefix`, `--object-region`, and `--object-endpoint`), or the experimental `gitlab-secure-files` (`--gitlab-project`, `--prefix`, `--gitlab-token-file`) and `aws-secrets-manager` (`--region`, `--prefix`, credentials from the standard AWS environment) stores. Every store holds the same ciphertext; encryption and path validation do not change. `sync rotate-password` supports Git and object storage. [Object storage](#object-storage) covers the bucket layout, credentials, and conflict handling. Push applies one profile configuration and one identity across its selected targets; it does not accept per-target profile types or device sets. Pull selectors similarly use one profile type per invocation. Certificate renewal remains explicit operator work; [Rotation and expiry](#rotation-and-expiry) has the ordering. Profile renewal, device refresh, and one-type cleanup are Git-only and are under [Renew, refresh, and remove synced profiles](#renew-refresh-and-remove-synced-profiles). Dedicated persistent keychain installation is separate from sync, creates a new keychain for one identity per invocation, and leaves provisioning-profile installation as an independent operation.
 
 ## CI example
 
@@ -965,7 +1076,7 @@ contain only the documented receipt fields and never raw profile data.
 
 Profiles cannot be edited. When a device, capability, certificate, or validity requirement changes, create a successor profile and move builds to it. Keep the old profile until every active build path has switched.
 
-`signing sync` does not renew certificates or delete stale encrypted files, and `asc` has no automatic renewal, bulk cleanup, or device-refresh command yet; those are planned. Expired or `INVALID` App Store Connect profiles can be removed with `asc signing fetch --delete-stale-profiles` ([Stale profiles](#stale-profiles)) and listed with `asc profiles list --stale-only`. Do certificate rotation in this order:
+`signing sync` does not renew certificates. Expired or `INVALID` App Store Connect profiles can be removed with `asc signing fetch --delete-stale-profiles` ([Stale profiles](#stale-profiles)) and listed with `asc profiles list --stale-only`; synced profiles are renewed, refreshed, or removed with the options under [Renew, refresh, and remove synced profiles](#renew-refresh-and-remove-synced-profiles). Do certificate rotation in this order:
 
 1. Create the new certificate from a locally retained private key or a new generated CSR.
 2. Create or reconcile successor profiles that use the new certificate.
@@ -979,7 +1090,7 @@ asc certificates revoke --id CERT_ID --confirm
 
 `--confirm` is required. Revocation cannot be undone and cannot be reversed with `--activated`. It invalidates provisioning profiles that embed that certificate. It does not pull App Store binaries Apple already re-signed; stopping already-installed apps is the in-house case under [Common profile types](#common-profile-types). Apple still counts a revoked certificate against the per-type limit until it expires, so revocation is not a way to free a slot immediately; see [Certificates](/commands/certificates).
 
-6. If HEAD should no longer carry unused `.enc` files, delete those paths in a later reviewed Git commit. Sync does not remove them. Password rotation re-encrypts the current branch head only; rewriting history is a separate incident-response decision.
+6. If HEAD should no longer carry unused `.enc` files, delete those paths in a later reviewed Git commit. Push removes only a profile it replaced, and `sync nuke` removes a whole profile type with its certificates. Password rotation re-encrypts the current branch head only; rewriting history is a separate incident-response decision.
 
 Git history retains encrypted prior assets, so repository access and password rotation deserve the same controls as other signing secrets. Do not commit the decrypted pull directory, password files, raw private keys, or PKCS#12 inputs.
 

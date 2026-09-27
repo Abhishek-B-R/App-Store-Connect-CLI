@@ -66,7 +66,7 @@ func TestSigningSyncStorageSelectionRejectsInvalidCombinations(t *testing.T) {
 		{
 			name: "unsupported storage",
 			args: []string{"--storage", "s3-bucket"},
-			want: `unsupported --storage "s3-bucket"; use git, gitlab-secure-files, or aws-secrets-manager`,
+			want: `unsupported --storage "s3-bucket"; use git, gitlab-secure-files, aws-secrets-manager, or object`,
 		},
 		{
 			name: "git storage still requires repo",
@@ -180,7 +180,7 @@ func TestSigningSyncPushRejectsUnsupportedStorageBeforeSecrets(t *testing.T) {
 		"--profile-type", "IOS_APP_STORE",
 		"--storage", "vault",
 	})
-	want := `unsupported --storage "vault"; use git, gitlab-secure-files, or aws-secrets-manager`
+	want := `unsupported --storage "vault"; use git, gitlab-secure-files, aws-secrets-manager, or object`
 	if err == nil || err.Error() != want {
 		t.Fatalf("error = %v, want %q", err, want)
 	}
@@ -241,7 +241,7 @@ func TestSigningSyncRejectsEmptyGitLabTokenFile(t *testing.T) {
 	}
 }
 
-func TestSigningSyncRotatePasswordRejectsNonGitStorage(t *testing.T) {
+func TestSigningSyncRotatePasswordRejectsUnsupportedStorage(t *testing.T) {
 	for _, storage := range []string{signingSyncStorageGitLab, signingSyncStorageAWS} {
 		t.Run(storage, func(t *testing.T) {
 			_, _, err := runSigningSyncCommandForStorage(t, syncRotatePasswordCommand(), []string{
@@ -251,7 +251,7 @@ func TestSigningSyncRotatePasswordRejectsNonGitStorage(t *testing.T) {
 				"--confirm",
 				"--storage", storage,
 			})
-			want := "signing sync rotate-password supports only --storage git"
+			want := "signing sync rotate-password supports only --storage git or --storage object"
 			if err == nil || err.Error() != want {
 				t.Fatalf("error = %v, want %q", err, want)
 			}
@@ -435,9 +435,9 @@ func TestSigningSyncRejectsEmptyStorage(t *testing.T) {
 		args       []string
 		want       string
 	}{
-		{"push", syncPushCommand, []string{"--bundle-id", "com.example.app", "--profile-type", "IOS_APP_STORE"}, `unsupported --storage ""; use git, gitlab-secure-files, or aws-secrets-manager`},
-		{"pull", syncPullCommand, nil, `unsupported --storage ""; use git, gitlab-secure-files, or aws-secrets-manager`},
-		{"rotate-password", syncRotatePasswordCommand, nil, "signing sync rotate-password supports only --storage git"},
+		{"push", syncPushCommand, []string{"--bundle-id", "com.example.app", "--profile-type", "IOS_APP_STORE"}, `unsupported --storage ""; use git, gitlab-secure-files, aws-secrets-manager, or object`},
+		{"pull", syncPullCommand, nil, `unsupported --storage ""; use git, gitlab-secure-files, aws-secrets-manager, or object`},
+		{"rotate-password", syncRotatePasswordCommand, nil, "signing sync rotate-password supports only --storage git or --storage object"},
 	} {
 		for _, value := range []string{"", "   "} {
 			t.Run(tc.name+"/"+strconv.Quote(value), func(t *testing.T) {

@@ -872,6 +872,39 @@ func TestValidateMatrixFrameMappingForSimulatorUsesActualFamily(t *testing.T) {
 	}
 }
 
+func TestValidateMatrixFrameMappingRejectsTabletFrameForPhoneSimulator(t *testing.T) {
+	phone := matrixSimulatorDevice{
+		Name:                 "iPhone 16 Pro",
+		DeviceTypeIdentifier: "com.apple.CoreSimulator.SimDeviceType.iPhone-16-Pro",
+	}
+	for _, frame := range []string{"ipad-pro-13", "watch-ultra-3", "apple-tv"} {
+		err := validateMatrixFrameMappingForSimulator("phone", frame, phone)
+		var mappingErr *matrixFrameMappingError
+		if !errors.As(err, &mappingErr) || mappingErr.code != matrixPreflightFrameMismatch {
+			t.Fatalf("validateMatrixFrameMappingForSimulator(%q) error = %v, want frame family mismatch", frame, err)
+		}
+	}
+}
+
+func TestValidateMatrixFrameMappingAcceptsTabletFrameForIPadSimulator(t *testing.T) {
+	ipad := matrixSimulatorDevice{
+		Name:                 "iPad Pro 13-inch (M4)",
+		DeviceTypeIdentifier: "com.apple.CoreSimulator.SimDeviceType.iPad-Pro-13-inch-M4-8GB",
+	}
+	for _, frame := range []string{"ipad-pro-13", "ipad-pro-11", "ipad-air-13", "ipad-air-11", "ipad-mini"} {
+		if err := validateMatrixFrameMappingForSimulator("tablet", frame, ipad); err != nil {
+			t.Fatalf("validateMatrixFrameMappingForSimulator(%q) error = %v, want iPad frame accepted", frame, err)
+		}
+	}
+	for _, frame := range []string{"iphone-17-pro", "watch-ultra-3", "apple-tv", "mac"} {
+		err := validateMatrixFrameMappingForSimulator("tablet", frame, ipad)
+		var mappingErr *matrixFrameMappingError
+		if !errors.As(err, &mappingErr) || mappingErr.code != matrixPreflightFrameMismatch {
+			t.Fatalf("validateMatrixFrameMappingForSimulator(%q) error = %v, want frame family mismatch", frame, err)
+		}
+	}
+}
+
 func TestCheckMatrixDeviceRejectsOversizedInventory(t *testing.T) {
 	skipWindowsUnixExecutableFixtures(t)
 	binDir := t.TempDir()
@@ -4823,7 +4856,7 @@ func TestFrameIntoRootUsesPinnedKoubouScratch(t *testing.T) {
 	writeExecutable(t, filepath.Join(binDir, "kou"), `#!/bin/sh
 set -eu
 if [ "$1" = "--version" ]; then
-  echo "kou 0.18.1"
+  echo "kou 0.20.0"
   exit 0
 fi
 if [ "$1" != "generate" ]; then
@@ -4894,7 +4927,7 @@ func TestFrameIntoRootRejectsKoubouScratchReplacementBeforeWrite(t *testing.T) {
 	writeExecutable(t, filepath.Join(binDir, "kou"), `#!/bin/sh
 set -eu
 if [ "$1" = "--version" ]; then
-  echo "kou 0.18.1"
+  echo "kou 0.20.0"
   exit 0
 fi
 if [ "$1" != "generate" ]; then
@@ -4983,7 +5016,7 @@ func TestFrameIntoRootRejectsKoubouNestedOutputReplacementBeforeWrite(t *testing
 	writeExecutable(t, filepath.Join(binDir, "kou"), `#!/bin/sh
 set -eu
 if [ "$1" = "--version" ]; then
-  echo "kou 0.18.1"
+  echo "kou 0.20.0"
   exit 0
 fi
 if [ "$1" != "generate" ]; then
