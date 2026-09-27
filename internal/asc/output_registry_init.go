@@ -603,6 +603,7 @@ func registerAllOutputRenderers() {
 	registerDirect(signingFetchBatchResultRender)
 	registerRows(capabilityReconcilePlanRows)
 	registerRows(signingSyncRows)
+	registerRows(signingSyncNukeRows)
 	registerRows(signingKeychainInstallRows)
 	registerRows(signingKeychainActionRows)
 	registerRows(signingKeychainListRows)
