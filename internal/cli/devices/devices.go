@@ -271,6 +271,7 @@ func DevicesRegisterCommand() *ffcli.Command {
 	ttl := fs.Duration("ttl", 30*time.Minute, "How long to wait for device callbacks")
 	outputFile := fs.String("output-file", "", "Collect-only TSV for register-batch when --confirm is not set")
 	confirm := fs.Bool("confirm", false, "Register collected devices in App Store Connect")
+	stream := fs.Bool("stream", false, "With --via-url, write one JSON receipt line per device arrival before the final summary (requires --output json)")
 	platform := fs.String("platform", "", "Device platform: "+strings.Join(devicePlatformList(), ", "))
 	output := shared.BindOutputFlags(fs)
 
@@ -283,7 +284,8 @@ func DevicesRegisterCommand() *ffcli.Command {
 Examples:
   asc devices register --name "iPhone 15" --udid "UDID" --platform IOS
   asc devices register --name "My Mac" --udid-from-system --platform MAC_OS
-  asc devices register --via-url --output-file ./devices.tsv`,
+  asc devices register --via-url --output-file ./devices.tsv
+  asc devices register --via-url --confirm --stream --output json --public-url "https://tunnel.example"`,
 		FlagSet:   fs,
 		UsageFunc: shared.DefaultUsageFunc,
 		Exec: func(ctx context.Context, args []string) error {
@@ -292,7 +294,7 @@ Examples:
 				var unused string
 				fs.Visit(func(f *flag.Flag) {
 					switch f.Name {
-					case "listen", "public-url", "ttl", "output-file", "confirm":
+					case "listen", "public-url", "ttl", "output-file", "confirm", "stream":
 						if unused == "" {
 							unused = f.Name
 						}
@@ -306,8 +308,17 @@ Examples:
 				if len(args) > 0 {
 					return shared.UsageError("devices register --via-url does not accept positional arguments")
 				}
-				if _, err := shared.ValidateOutputFormat(*output.Output, *output.Pretty); err != nil {
+				format, err := shared.ValidateOutputFormat(*output.Output, *output.Pretty)
+				if err != nil {
 					return err
+				}
+				if *stream {
+					if format != "json" {
+						return shared.UsageError("--stream requires --output json")
+					}
+					if *output.Pretty {
+						return shared.UsageError("--stream cannot be combined with --pretty")
+					}
 				}
 				options := deviceURLServeOptions{
 					Name:           nameValue,
@@ -328,7 +339,7 @@ Examples:
 				if platformValue == "" {
 					platformValue = "IOS"
 				}
-				platformValue, err := normalizeDevicePlatform(platformValue)
+				platformValue, err = normalizeDevicePlatform(platformValue)
 				if err != nil {
 					return fmt.Errorf("devices register: %w", shared.UsageError(err.Error()))
 				}
@@ -346,6 +357,9 @@ Examples:
 				}
 				options.Platform = platformValue
 				options.Client = client
+				if *stream {
+					options.Stream = os.Stdout
+				}
 				result, err := serveDeviceRegistration(ctx, options)
 				if result != nil {
 					if printErr := shared.PrintOutput(result, *output.Output, *output.Pretty); printErr != nil && err == nil {
