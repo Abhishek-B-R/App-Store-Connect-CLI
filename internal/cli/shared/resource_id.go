@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"net/url"
+	"os"
 	"regexp"
 	"strings"
 )
@@ -93,4 +94,19 @@ func (v *resourceIDValue) Set(raw string) error {
 // other custom flag values in this package.
 func (v *resourceIDValue) Get() any {
 	return v.String()
+}
+
+// AppIDFlagValue normalizes the value of an --app flag that keeps a plain
+// string default (for example one seeded from ASC_APP_ID) and so cannot be
+// bound with BindResourceIDFlag without changing its help text. It accepts an
+// apps self-link and reports a link of another type as a concise usage error
+// with the same message as a flag-parse failure.
+func AppIDFlagValue(value string) (string, error) {
+	id, err := ResourceIDFromValue(value, "apps")
+	if err != nil {
+		message := SanitizeTerminal(fmt.Sprintf("invalid value %q for flag -app: %v", strings.TrimSpace(value), err))
+		fmt.Fprintf(os.Stderr, "Error: %s\n", message)
+		return "", NewReportedUsageError(UsageErrorInvalidValue, message)
+	}
+	return id, nil
 }

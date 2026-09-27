@@ -57,6 +57,7 @@ Examples:
   asc offer-codes custom-codes list --offer-code-id "OFFER_CODE_ID" --paginate`,
 		ParentFlag:  "offer-code-id",
 		ParentUsage: "Subscription offer code ID (required)",
+		ParentType:  "subscriptionOfferCodes",
 		LimitMax:    offerCodesMaxLimit,
 		ErrorPrefix: "offer-codes custom-codes list",
 		FetchPage: func(ctx context.Context, client *asc.Client, offerCodeID string, limit int, next string) (asc.PaginatedResponse, error) {
@@ -86,6 +87,7 @@ Examples:
   asc offer-codes custom-codes view --custom-code-id "CUSTOM_CODE_ID"`,
 		IDFlag:      "custom-code-id",
 		IDUsage:     "Custom code ID (required)",
+		IDType:      "subscriptionOfferCodeCustomCodes",
 		ErrorPrefix: "offer-codes custom-codes view",
 		Fetch: func(ctx context.Context, client *asc.Client, id string) (any, error) {
 			return client.GetSubscriptionOfferCodeCustomCode(ctx, id)
@@ -192,6 +194,7 @@ Examples:
   asc offer-codes custom-codes update --custom-code-id "CUSTOM_CODE_ID" --active false`,
 		IDFlag:      "custom-code-id",
 		IDUsage:     "Custom code ID (required)",
+		IDType:      "subscriptionOfferCodeCustomCodes",
 		ErrorPrefix: "offer-codes custom-codes update",
 		Update: func(ctx context.Context, client *asc.Client, id string, active *bool) (any, error) {
 			return client.UpdateSubscriptionOfferCodeCustomCode(ctx, id, asc.SubscriptionOfferCodeCustomCodeUpdateAttributes{Active: active})

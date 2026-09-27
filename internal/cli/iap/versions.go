@@ -379,7 +379,7 @@ func IAPVersionImageCommand() *ffcli.Command {
 func IAPVersionSubmitCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("versions submit", flag.ExitOnError)
 	versionID := shared.BindResourceIDFlag(fs, "version-id", "inAppPurchaseVersions", "In-app purchase version ID")
-	submissionID := fs.String("submission", "", "Review submission ID")
+	submissionID := shared.BindResourceIDFlag(fs, "submission", "reviewSubmissions", "Review submission ID")
 	confirm := fs.Bool("confirm", false, "Confirm adding the version to review")
 	output := shared.BindOutputFlags(fs)
 	return &ffcli.Command{

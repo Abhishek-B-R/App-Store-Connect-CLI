@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/rudrankriyam/App-Store-Connect-CLI/internal/asc"
 	"github.com/rudrankriyam/App-Store-Connect-CLI/internal/cli/shared"
 	signingpkg "github.com/rudrankriyam/App-Store-Connect-CLI/internal/signing"
 )
@@ -17,9 +18,74 @@ const (
 	signingSyncStorageGit    = "git"
 	signingSyncStorageGitLab = "gitlab-secure-files"
 	signingSyncStorageAWS    = "aws-secrets-manager"
+	signingSyncStorageObject = "object"
 )
 
-const signingSyncStorageValues = signingSyncStorageGit + ", " + signingSyncStorageGitLab + ", or " + signingSyncStorageAWS
+const signingSyncStorageValues = signingSyncStorageGit + ", " + signingSyncStorageGitLab + ", " + signingSyncStorageAWS + ", or " + signingSyncStorageObject
+
+// signingSyncObjectFlagNames lists the flags that only --storage object accepts.
+var signingSyncObjectFlagNames = []string{"object-bucket", "object-prefix", "object-region", "object-endpoint"}
+
+// signingSyncObjectFlags holds the S3-compatible object storage locator.
+// Credentials never come from flags; the standard AWS chain supplies them.
+type signingSyncObjectFlags struct {
+	bucket   *string
+	prefix   *string
+	region   *string
+	endpoint *string
+}
+
+func bindSigningSyncObjectFlags(fs *flag.FlagSet) *signingSyncObjectFlags {
+	return &signingSyncObjectFlags{
+		bucket: fs.String("object-bucket", "",
+			"Bucket holding the encrypted artifacts (required with --storage "+signingSyncStorageObject+")"),
+		prefix: fs.String("object-prefix", "",
+			"Key prefix inside --object-bucket, such as asc/ (default: bucket root)"),
+		region: fs.String("object-region", "",
+			"Bucket region (default: the standard AWS configuration, such as AWS_REGION)"),
+		endpoint: fs.String("object-endpoint", "",
+			"HTTPS origin of an S3-compatible service, addressed path-style (default: AWS S3)"),
+	}
+}
+
+func (f *signingSyncObjectFlags) options() signingpkg.ObjectStorageOptions {
+	return signingpkg.ObjectStorageOptions{
+		Bucket:   strings.TrimSpace(*f.bucket),
+		Prefix:   strings.TrimSpace(*f.prefix),
+		Region:   strings.TrimSpace(*f.region),
+		Endpoint: strings.TrimSpace(*f.endpoint),
+	}
+}
+
+// parseSigningSyncObjectStorage validates the object storage locator without
+// reading credentials or contacting the network.
+func parseSigningSyncObjectStorage(flags *signingSyncObjectFlags) (signingpkg.ObjectStorageOptions, error) {
+	options := flags.options()
+	if options.Bucket == "" {
+		return signingpkg.ObjectStorageOptions{}, shared.UsageErrorf("--object-bucket is required with --storage %s", signingSyncStorageObject)
+	}
+	if err := signingpkg.ValidateObjectStorageOptions(options); err != nil {
+		return signingpkg.ObjectStorageOptions{}, shared.UsageError(err.Error())
+	}
+	return options, nil
+}
+
+func rejectSigningSyncObjectFlags(provided map[string]bool) error {
+	for _, name := range signingSyncObjectFlagNames {
+		if provided[name] {
+			return shared.UsageErrorf("--%s requires --storage %s", name, signingSyncStorageObject)
+		}
+	}
+	return nil
+}
+
+// newSigningSyncObjectStore resolves AWS configuration and credentials. It is
+// the first step that may contact the network.
+func newSigningSyncObjectStore(ctx context.Context, options signingpkg.ObjectStorageOptions) (*signingpkg.ObjectStorageStore, error) {
+	options.MaxArtifacts = maxEncryptedSigningFiles
+	options.RequestContext = shared.ContextWithTimeout
+	return signingpkg.NewObjectStorageStore(ctx, options)
+}
 
 // signingSyncStorageFlags holds the remote storage selectors.
 type signingSyncStorageFlags struct {
@@ -29,10 +95,11 @@ type signingSyncStorageFlags struct {
 	gitlabHost      *string
 	gitlabProject   *string
 	gitlabTokenFile *string
+	object          *signingSyncObjectFlags
 }
 
 func bindSigningSyncStorageFlags(fs *flag.FlagSet) *signingSyncStorageFlags {
-	return &signingSyncStorageFlags{
+	flags := &signingSyncStorageFlags{
 		storage: fs.String("storage", signingSyncStorageGit,
 			"Encrypted artifact storage ("+signingSyncStorageValues+")"),
 		prefix: fs.String("prefix", "",
@@ -46,6 +113,8 @@ func bindSigningSyncStorageFlags(fs *flag.FlagSet) *signingSyncStorageFlags {
 		gitlabTokenFile: fs.String("gitlab-token-file", "",
 			"Protected file containing the GitLab API token (required with --storage "+signingSyncStorageGitLab+")"),
 	}
+	flags.object = bindSigningSyncObjectFlags(fs)
+	return flags
 }
 
 // signingSyncStorageSelection is the validated storage choice. Parsing it
@@ -60,6 +129,7 @@ type signingSyncStorageSelection struct {
 	gitlabHost      string
 	gitlabProject   string
 	gitlabTokenFile string
+	object          signingpkg.ObjectStorageOptions
 }
 
 func providedSigningSyncFlags(fs *flag.FlagSet) map[string]bool {
@@ -82,6 +152,12 @@ func parseSigningSyncStorage(fs *flag.FlagSet, flags *signingSyncStorageFlags, r
 		gitlabHost:      strings.TrimSpace(*flags.gitlabHost),
 		gitlabProject:   strings.TrimSpace(*flags.gitlabProject),
 		gitlabTokenFile: strings.TrimSpace(*flags.gitlabTokenFile),
+	}
+
+	if kind != signingSyncStorageObject {
+		if err := rejectSigningSyncObjectFlags(provided); err != nil {
+			return signingSyncStorageSelection{}, err
+		}
 	}
 
 	switch kind {
@@ -131,6 +207,25 @@ func parseSigningSyncStorage(fs *flag.FlagSet, flags *signingSyncStorageFlags, r
 		if err := signingpkg.ValidateArtifactPrefix(selection.prefix); err != nil {
 			return signingSyncStorageSelection{}, shared.UsageError(err.Error())
 		}
+	case signingSyncStorageObject:
+		if err := rejectGitOnlySigningSyncFlags(provided, kind); err != nil {
+			return signingSyncStorageSelection{}, err
+		}
+		for _, name := range []string{"prefix", "region"} {
+			if provided[name] {
+				return signingSyncStorageSelection{}, shared.UsageErrorf("--%s is not supported with --storage %s; use --object-%s", name, signingSyncStorageObject, name)
+			}
+		}
+		for _, name := range []string{"gitlab-host", "gitlab-project", "gitlab-token-file"} {
+			if provided[name] {
+				return signingSyncStorageSelection{}, shared.UsageErrorf("--%s requires --storage %s", name, signingSyncStorageGitLab)
+			}
+		}
+		objectOptions, err := parseSigningSyncObjectStorage(flags.object)
+		if err != nil {
+			return signingSyncStorageSelection{}, err
+		}
+		selection.object = objectOptions
 	default:
 		return signingSyncStorageSelection{}, shared.UsageErrorf("unsupported --storage %q; use %s", kind, signingSyncStorageValues)
 	}
@@ -153,6 +248,7 @@ type signingSyncTransport interface {
 	Publish(ctx context.Context, store *signingpkg.GitStore, message string) error
 	Locator() string
 	Kind() string
+	Storage() *asc.SigningSyncStorage
 }
 
 // transport resolves the selection into a usable backend. It is the first step
@@ -194,6 +290,12 @@ func (s signingSyncStorageSelection) transport(ctx context.Context) (signingSync
 			return nil, fmt.Errorf("aws secrets manager: %w", err)
 		}
 		return signingSyncRemoteTransport{kind: s.kind, label: "AWS Secrets Manager", backend: backend}, nil
+	case signingSyncStorageObject:
+		backend, err := newSigningSyncObjectStore(ctx, s.object)
+		if err != nil {
+			return nil, err
+		}
+		return signingSyncRemoteTransport{kind: s.kind, label: "object storage", backend: backend}, nil
 	default:
 		return nil, shared.UsageErrorf("unsupported --storage %q; use %s", s.kind, signingSyncStorageValues)
 	}
@@ -217,6 +319,16 @@ func (t signingSyncGitTransport) Publish(ctx context.Context, store *signingpkg.
 func (t signingSyncGitTransport) Locator() string { return sanitizeRepoURLForOutput(t.repoURL) }
 
 func (t signingSyncGitTransport) Kind() string { return signingSyncStorageGit }
+
+func (t signingSyncGitTransport) Storage() *asc.SigningSyncStorage {
+	return gitSigningSyncStorage(t.repoURL, t.branch)
+}
+
+// gitSigningSyncStorage describes git storage with the same redacted locator
+// that repoUrl reports.
+func gitSigningSyncStorage(repoURL, branch string) *asc.SigningSyncStorage {
+	return &asc.SigningSyncStorage{Kind: signingSyncStorageGit, Location: sanitizeRepoURLForOutput(repoURL), Branch: branch}
+}
 
 // signingSyncRemoteBackend transports already-encrypted artifacts to and from
 // a remote store.
@@ -245,6 +357,10 @@ func (t signingSyncRemoteTransport) Publish(ctx context.Context, store *signingp
 func (t signingSyncRemoteTransport) Locator() string { return t.backend.Locator() }
 
 func (t signingSyncRemoteTransport) Kind() string { return t.kind }
+
+func (t signingSyncRemoteTransport) Storage() *asc.SigningSyncStorage {
+	return &asc.SigningSyncStorage{Kind: t.kind, Location: t.backend.Locator()}
+}
 
 // newSigningSyncStore creates the local ciphertext working tree for a
 // transport. Only git storage uses the repository URL and branch.

@@ -16,7 +16,7 @@ import (
 func SubmitCancelCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("submit cancel", flag.ExitOnError)
 
-	submissionID := fs.String("id", "", "Submission ID")
+	submissionID := shared.BindResourceIDFlag(fs, "id", "reviewSubmissions", "Submission ID")
 	versionID := shared.BindResourceIDFlag(fs, "version-id", "appStoreVersions", "App Store version ID")
 	appID := fs.String("app", "", "App Store Connect app ID (or ASC_APP_ID); used with --version-id for modern API lookup")
 	confirm := fs.Bool("confirm", false, "Confirm cancellation (required)")

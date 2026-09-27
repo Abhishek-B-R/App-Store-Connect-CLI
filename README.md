@@ -405,8 +405,13 @@ asc signing sync pull --repo git@github.com:team/signing.git --password-file ~/.
 
 `signing fetch` downloads public certificates and provisioning profiles. A
 usable signing identity also needs the matching private key; `signing sync`
-can verify that local identity and share it through an encrypted Git
-repository. For multi-target release testing, `signing reconcile` plans exact
+can verify that local identity and share it through an encrypted store (Git by
+default). When the team has no active certificate, `signing fetch
+--create-missing --create-missing-certificate` creates the key, certificate,
+profile, and `.p12` in one pass. `signing keychain` installs and manages a
+dedicated keychain, and `xcode signing plan --profile` maps downloaded profiles
+onto Xcode targets; [docs/CI_CD.md](docs/CI_CD.md) lists the fresh-runner
+sequence. For multi-target release testing, `signing reconcile` plans exact
 device/profile changes. `signing run` provides a temporary macOS keychain only
 for single-target archives. Multi-target exports must import the identity into
 a job-scoped keychain and install every reconciled profile for the job-exclusive
@@ -534,7 +539,7 @@ For full command families, flags, and discovery patterns, see:
 
 ## Acknowledgements
 
-Local screenshot framing uses Koubou (pinned to `0.18.1`) for deterministic device-frame rendering.
+Local screenshot framing uses Koubou (pinned to `0.20.0`) for deterministic device-frame rendering.
 GitHub: https://github.com/bitomule/koubou
 
 Simulator UI automation for screenshot capture and interactions uses AXe CLI.

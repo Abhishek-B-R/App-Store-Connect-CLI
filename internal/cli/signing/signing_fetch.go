@@ -48,7 +48,7 @@ func rejectDeviceWithoutCreateMissing(deviceIDs string, createMissing bool) erro
 func SigningFetchCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("fetch", flag.ExitOnError)
 
-	appID := fs.String("app", "", "App Store Connect app ID (optional); when set, --bundle-id must be this app's bundle ID")
+	appID := shared.BindResourceIDFlag(fs, "app", "apps", "App Store Connect app ID (optional); when set, --bundle-id must be this app's bundle ID")
 	bundleID := fs.String("bundle-id", "", "Bundle identifier (e.g., com.example.app) - required")
 	profileType := fs.String("profile-type", "", "Profile type: IOS_APP_STORE, IOS_APP_DEVELOPMENT, MAC_APP_STORE, etc. (required)")
 	deviceIDs := fs.String("device", "", "Device ID(s), comma-separated (requires --create-missing; required for development profiles)")
@@ -969,6 +969,16 @@ type signingAssetsOptions struct {
 	BeforeCreate             func(profileCreatePlan) error
 	CreateContext            func() (context.Context, context.CancelFunc)
 	CertificateFilter        func(asc.Resource[asc.CertificateAttributes]) bool
+	// RenewExpired replaces the most recently expired profile of ProfileType
+	// with a same-name profile when no active profile resolves.
+	RenewExpired bool
+	// ForceForNewDevices replaces a resolved device profile whose devices
+	// differ from DeviceIDs or, when DeviceIDs is empty, from the enabled
+	// devices that belong in ProfileType.
+	ForceForNewDevices bool
+	// IncludeMacDevices adds enabled Apple silicon Macs to the enabled device
+	// set used by ForceForNewDevices for iOS profiles.
+	IncludeMacDevices bool
 }
 
 // profileCreatePlan describes the profile that is about to be created so callers
@@ -981,6 +991,13 @@ type profileCreatePlan struct {
 type signingAssetsProgress struct {
 	Certificates           []asc.Resource[asc.CertificateAttributes]
 	ProfileCreateAttempted bool
+	// Lifecycle reports how RenewExpired or ForceForNewDevices treated an
+	// existing profile. It is set before any replacement mutation so partial
+	// receipts can describe it.
+	Lifecycle *asc.SigningSyncProfileLifecycle
+	// ReplacementAttempted is true once the deletion of a replaced profile
+	// was requested.
+	ReplacementAttempted bool
 }
 
 var errNoMatchingProfileCertificates = errors.New("profile has no matching associated certificates")
@@ -999,6 +1016,27 @@ func resolveSigningAssets(ctx context.Context, client *asc.Client, options signi
 	if err != nil {
 		return nil, nil, false, err
 	}
+	var (
+		desiredDevices  []string
+		desiredResolved bool
+	)
+	resolveDesiredDevices := func() ([]string, error) {
+		if desiredResolved {
+			return desiredDevices, nil
+		}
+		if len(options.DeviceIDs) > 0 {
+			desiredDevices = uniqueSortedSigningSyncStrings(options.DeviceIDs)
+		} else {
+			ids, listErr := listEnabledProfileDeviceIDs(ctx, client, options.ProfileType, options.IncludeMacDevices)
+			if listErr != nil {
+				return nil, listErr
+			}
+			desiredDevices = ids
+		}
+		desiredResolved = true
+		return desiredDevices, nil
+	}
+
 	var certificateMatchErr error
 	for _, profileResource := range profiles {
 		profile := &asc.ProfileResponse{Data: profileResource}
@@ -1009,6 +1047,12 @@ func resolveSigningAssets(ctx context.Context, client *asc.Client, options signi
 				certificateMatchErr = fmt.Errorf("profile %s has no associated certificate matching the local signing identity: %w", profile.Data.ID, errNoMatchingProfileCertificates)
 				continue
 			}
+			if options.ForceForNewDevices {
+				return refreshSigningProfileDevices(ctx, client, options, profile, certificates, resolveDesiredDevices)
+			}
+			if options.RenewExpired && options.Progress != nil {
+				options.Progress.Lifecycle = &asc.SigningSyncProfileLifecycle{Action: asc.SigningSyncLifecycleUnchanged, ProfileID: profile.Data.ID}
+			}
 			return profile, certificates, false, nil
 		}
 		if !errors.Is(err, errNoMatchingProfileCertificates) {
@@ -1017,7 +1061,32 @@ func resolveSigningAssets(ctx context.Context, client *asc.Client, options signi
 		certificateMatchErr = err
 	}
 
-	if !options.CreateMissing {
+	var replacement *profileReplacement
+	// Renewal applies only when no active, unexpired profile of the type
+	// exists. An active profile whose certificates do not match keeps its
+	// mismatch error instead of gaining an unrelated renewed sibling.
+	if options.RenewExpired && len(profiles) == 0 {
+		expired, err := findLatestExpiredProfile(ctx, client, options.BundleIDResourceID, options.ProfileType)
+		if err != nil {
+			return nil, nil, false, fmt.Errorf("find expired profiles: %w", err)
+		}
+		if expired != nil {
+			replacement = &profileReplacement{
+				Profile: *expired,
+				Lifecycle: &asc.SigningSyncProfileLifecycle{
+					Action:                 asc.SigningSyncLifecycleRenewed,
+					ReplacedProfileID:      expired.ID,
+					ReplacedProfileName:    expired.Attributes.Name,
+					ReplacedExpirationDate: expired.Attributes.ExpirationDate,
+				},
+			}
+			if name := strings.TrimSpace(expired.Attributes.Name); name != "" {
+				profileName = expired.Attributes.Name
+			}
+		}
+	}
+
+	if !options.CreateMissing && replacement == nil {
 		if certificateMatchErr != nil {
 			return nil, nil, false, certificateMatchErr
 		}
@@ -1026,6 +1095,33 @@ func resolveSigningAssets(ctx context.Context, client *asc.Client, options signi
 			options.ProfileType,
 			options.BundleIdentifier,
 		)
+	}
+
+	deviceIDs := options.DeviceIDs
+	if isDeviceProfileType(options.ProfileType) && (options.ForceForNewDevices || replacement != nil) {
+		if options.ForceForNewDevices {
+			desired, err := resolveDesiredDevices()
+			if err != nil {
+				return nil, nil, false, err
+			}
+			deviceIDs = desired
+		}
+		if replacement != nil {
+			current, err := listProfileDevices(ctx, client, replacement.Profile.ID)
+			if err != nil {
+				return nil, nil, false, err
+			}
+			if !options.ForceForNewDevices && len(options.DeviceIDs) == 0 {
+				deviceIDs = deviceResourceIDs(current, true)
+				if len(deviceIDs) == 0 {
+					return nil, nil, false, fmt.Errorf("expired profile %s has no enabled devices to renew; pass --device or --force-for-new-devices", replacement.Profile.ID)
+				}
+			}
+			replacement.Lifecycle.DevicesAdded, replacement.Lifecycle.DevicesRemoved = diffDeviceIDs(deviceResourceIDs(current, false), uniqueSortedSigningSyncStrings(deviceIDs))
+		}
+	}
+	if replacement != nil && options.Progress != nil {
+		options.Progress.Lifecycle = replacement.Lifecycle
 	}
 
 	certificates, err := findCertificates(ctx, client, options.ProfileType, certificateType)
@@ -1095,27 +1191,115 @@ func resolveSigningAssets(ctx context.Context, client *asc.Client, options signi
 		}
 		certificates.Data = []asc.Resource[asc.CertificateAttributes]{created}
 	}
+	profile, err := createSigningProfile(ctx, client, options, profileName, certificates.Data, deviceIDs, replacement)
+	if err != nil {
+		return nil, nil, false, err
+	}
+	return profile, certificates, true, nil
+}
+
+// refreshSigningProfileDevices keeps a resolved device profile when its
+// devices already match the desired device set, and otherwise replaces it
+// with a same-name profile that reuses its certificates.
+func refreshSigningProfileDevices(
+	ctx context.Context,
+	client *asc.Client,
+	options signingAssetsOptions,
+	profile *asc.ProfileResponse,
+	certificates *asc.CertificatesResponse,
+	resolveDesiredDevices func() ([]string, error),
+) (*asc.ProfileResponse, *asc.CertificatesResponse, bool, error) {
+	desired, err := resolveDesiredDevices()
+	if err != nil {
+		return nil, nil, false, err
+	}
+	current, err := listProfileDevices(ctx, client, profile.Data.ID)
+	if err != nil {
+		return nil, nil, false, err
+	}
+	added, removed := diffDeviceIDs(deviceResourceIDs(current, false), desired)
+	lifecycle := &asc.SigningSyncProfileLifecycle{Action: asc.SigningSyncLifecycleUnchanged, ProfileID: profile.Data.ID}
+	if options.Progress != nil {
+		options.Progress.Lifecycle = lifecycle
+	}
+	if len(added) == 0 && len(removed) == 0 {
+		return profile, certificates, false, nil
+	}
+	lifecycle.Action = asc.SigningSyncLifecycleDevicesRefreshed
+	lifecycle.ProfileID = ""
+	lifecycle.ReplacedProfileID = profile.Data.ID
+	lifecycle.ReplacedProfileName = profile.Data.Attributes.Name
+	lifecycle.DevicesAdded = added
+	lifecycle.DevicesRemoved = removed
+	profileName := profile.Data.Attributes.Name
+	if strings.TrimSpace(profileName) == "" {
+		profileName = profileCreateName(options.ProfileType, signingFetchNowFn())
+	}
+	replacement := &profileReplacement{Profile: profile.Data, Lifecycle: lifecycle}
+	created, err := createSigningProfile(ctx, client, options, profileName, certificates.Data, desired, replacement)
+	if err != nil {
+		return nil, nil, false, err
+	}
+	return created, certificates, true, nil
+}
+
+// createSigningProfile runs the caller's preflight, deletes the profile being
+// replaced when there is one, and then creates the new profile. Every read and
+// local check happens before the deletion so a failed preflight never leaves
+// the bundle without its previous profile.
+func createSigningProfile(
+	ctx context.Context,
+	client *asc.Client,
+	options signingAssetsOptions,
+	profileName string,
+	certificates []asc.Resource[asc.CertificateAttributes],
+	deviceIDs []string,
+	replacement *profileReplacement,
+) (*asc.ProfileResponse, error) {
 	if options.BeforeCreate != nil {
 		if options.Progress != nil {
-			options.Progress.Certificates = append([]asc.Resource[asc.CertificateAttributes](nil), certificates.Data...)
+			options.Progress.Certificates = append([]asc.Resource[asc.CertificateAttributes](nil), certificates...)
 		}
-		plan := profileCreatePlan{ProfileName: profileName, Certificates: certificates.Data}
+		plan := profileCreatePlan{ProfileName: profileName, Certificates: certificates}
 		if err := options.BeforeCreate(plan); err != nil {
-			return nil, nil, false, fmt.Errorf("preflight before creating profile: %w", err)
+			return nil, fmt.Errorf("preflight before creating profile: %w", err)
 		}
-	}
-	if options.Progress != nil {
-		options.Progress.Certificates = append([]asc.Resource[asc.CertificateAttributes](nil), certificates.Data...)
-		options.Progress.ProfileCreateAttempted = true
 	}
 
-	createCtx := ctx
-	cancelCreate := func() {}
-	if options.CreateContext != nil {
-		createCtx, cancelCreate = options.CreateContext()
-		if createCtx == nil {
-			return nil, nil, false, fmt.Errorf("profile create context is nil")
+	// Each outbound mutation gets its own request context so a slow deletion
+	// cannot exhaust the time left to create the replacement.
+	requestContext := func() (context.Context, context.CancelFunc, error) {
+		if options.CreateContext == nil {
+			return ctx, func() {}, nil
 		}
+		requestCtx, cancel := options.CreateContext()
+		if requestCtx == nil {
+			if cancel != nil {
+				cancel()
+			}
+			return nil, nil, fmt.Errorf("profile create context is nil")
+		}
+		return requestCtx, cancel, nil
+	}
+	if replacement != nil {
+		deleteCtx, cancelDelete, err := requestContext()
+		if err != nil {
+			return nil, err
+		}
+		err = deleteReplacedProfile(deleteCtx, client, replacement, options.Progress)
+		cancelDelete()
+		if err != nil {
+			return nil, err
+		}
+	}
+	createCtx, cancelCreate, err := requestContext()
+	if err != nil {
+		return nil, err
+	}
+	defer cancelCreate()
+	if options.Progress != nil {
+		options.Progress.Certificates = append([]asc.Resource[asc.CertificateAttributes](nil), certificates...)
+		options.Progress.ProfileCreateAttempted = true
 	}
 	profile, err := createProfile(
 		createCtx,
@@ -1123,14 +1307,19 @@ func resolveSigningAssets(ctx context.Context, client *asc.Client, options signi
 		options.BundleIDResourceID,
 		profileName,
 		options.ProfileType,
-		extractIDs(certificates.Data),
-		options.DeviceIDs,
+		extractIDs(certificates),
+		deviceIDs,
 	)
-	cancelCreate()
 	if err != nil {
-		return nil, nil, false, err
+		if replacement != nil {
+			return nil, fmt.Errorf("profile %s (%q) was deleted but its replacement was not created; rerun with --create-missing to create a new profile: %w", replacement.Profile.ID, replacement.Profile.Attributes.Name, err)
+		}
+		return nil, err
 	}
-	return profile, certificates, true, nil
+	if replacement != nil {
+		replacement.Lifecycle.ProfileID = profile.Data.ID
+	}
+	return profile, nil
 }
 
 func filterSigningCertificates(certificates []asc.Resource[asc.CertificateAttributes], filter func(asc.Resource[asc.CertificateAttributes]) bool) []asc.Resource[asc.CertificateAttributes] {

@@ -148,7 +148,7 @@ Examples:
 func GameCenterActivitiesGetCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("view", flag.ExitOnError)
 
-	activityID := fs.String("id", "", "Game Center activity ID")
+	activityID := shared.BindResourceIDFlag(fs, "id", "gameCenterActivities", "Game Center activity ID")
 	output := shared.BindOutputFlags(fs)
 
 	return &ffcli.Command{
@@ -323,7 +323,7 @@ Examples:
 func GameCenterActivitiesUpdateCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("update", flag.ExitOnError)
 
-	activityID := fs.String("id", "", "Game Center activity ID")
+	activityID := shared.BindResourceIDFlag(fs, "id", "gameCenterActivities", "Game Center activity ID")
 	referenceName := fs.String("reference-name", "", "Reference name for the activity")
 	playStyle := fs.String("play-style", "", "Play style (ASYNCHRONOUS, SYNCHRONOUS)")
 	minPlayers := fs.Int("min-players", 0, "Minimum players count")
@@ -419,7 +419,7 @@ Examples:
 func GameCenterActivitiesDeleteCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("delete", flag.ExitOnError)
 
-	activityID := fs.String("id", "", "Game Center activity ID")
+	activityID := shared.BindResourceIDFlag(fs, "id", "gameCenterActivities", "Game Center activity ID")
 	confirm := fs.Bool("confirm", false, "Confirm deletion")
 	output := shared.BindOutputFlags(fs)
 
@@ -757,7 +757,7 @@ Examples:
 func GameCenterActivityVersionsGetCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("view", flag.ExitOnError)
 
-	versionID := fs.String("id", "", "Game Center activity version ID")
+	versionID := shared.BindResourceIDFlag(fs, "id", "gameCenterActivityVersions", "Game Center activity version ID")
 	output := shared.BindOutputFlags(fs)
 
 	return &ffcli.Command{
@@ -843,7 +843,7 @@ Examples:
 func GameCenterActivityVersionsUpdateCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("update", flag.ExitOnError)
 
-	versionID := fs.String("id", "", "Game Center activity version ID")
+	versionID := shared.BindResourceIDFlag(fs, "id", "gameCenterActivityVersions", "Game Center activity version ID")
 	fallbackURL := fs.String("fallback-url", "", "Fallback URL")
 	output := shared.BindOutputFlags(fs)
 
@@ -1001,7 +1001,7 @@ Examples:
 func GameCenterActivityLocalizationsGetCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("view", flag.ExitOnError)
 
-	localizationID := fs.String("id", "", "Game Center activity localization ID")
+	localizationID := shared.BindResourceIDFlag(fs, "id", "gameCenterActivityLocalizations", "Game Center activity localization ID")
 	output := shared.BindOutputFlags(fs)
 
 	return &ffcli.Command{
@@ -1109,7 +1109,7 @@ Examples:
 func GameCenterActivityLocalizationsUpdateCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("update", flag.ExitOnError)
 
-	localizationID := fs.String("id", "", "Game Center activity localization ID")
+	localizationID := shared.BindResourceIDFlag(fs, "id", "gameCenterActivityLocalizations", "Game Center activity localization ID")
 	name := fs.String("name", "", "Localized name")
 	description := fs.String("description", "", "Localized description")
 	output := shared.BindOutputFlags(fs)
@@ -1172,7 +1172,7 @@ Examples:
 func GameCenterActivityLocalizationsDeleteCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("delete", flag.ExitOnError)
 
-	localizationID := fs.String("id", "", "Game Center activity localization ID")
+	localizationID := shared.BindResourceIDFlag(fs, "id", "gameCenterActivityLocalizations", "Game Center activity localization ID")
 	confirm := fs.Bool("confirm", false, "Confirm deletion")
 	output := shared.BindOutputFlags(fs)
 
@@ -1301,7 +1301,7 @@ Examples:
 func GameCenterActivityImagesGetCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("view", flag.ExitOnError)
 
-	imageID := fs.String("id", "", "Activity image ID")
+	imageID := shared.BindResourceIDFlag(fs, "id", "gameCenterActivityImages", "Activity image ID")
 	output := shared.BindOutputFlags(fs)
 
 	return &ffcli.Command{
@@ -1343,7 +1343,7 @@ Examples:
 func GameCenterActivityImagesDeleteCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("delete", flag.ExitOnError)
 
-	imageID := fs.String("id", "", "Activity image ID")
+	imageID := shared.BindResourceIDFlag(fs, "id", "gameCenterActivityImages", "Activity image ID")
 	confirm := fs.Bool("confirm", false, "Confirm deletion")
 	output := shared.BindOutputFlags(fs)
 
@@ -1549,7 +1549,7 @@ Examples:
 func GameCenterActivityReleasesDeleteCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("delete", flag.ExitOnError)
 
-	releaseID := fs.String("id", "", "Game Center activity release ID")
+	releaseID := shared.BindResourceIDFlag(fs, "id", "gameCenterActivityVersionReleases", "Game Center activity release ID")
 	confirm := fs.Bool("confirm", false, "Confirm deletion")
 	output := shared.BindOutputFlags(fs)
 
@@ -1623,7 +1623,7 @@ Examples:
 func GameCenterActivityLocalizationImageGetCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("view", flag.ExitOnError)
 
-	localizationID := fs.String("id", "", "Game Center activity localization ID")
+	localizationID := shared.BindResourceIDFlag(fs, "id", "gameCenterActivityLocalizations", "Game Center activity localization ID")
 	output := shared.BindOutputFlags(fs)
 
 	return &ffcli.Command{
@@ -1688,7 +1688,7 @@ Examples:
 func GameCenterActivityVersionDefaultImageGetCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("view", flag.ExitOnError)
 
-	versionID := fs.String("id", "", "Game Center activity version ID")
+	versionID := shared.BindResourceIDFlag(fs, "id", "gameCenterActivityVersions", "Game Center activity version ID")
 	output := shared.BindOutputFlags(fs)
 
 	return &ffcli.Command{
