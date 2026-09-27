@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -104,6 +105,9 @@ func normalizeObjectStorageOptions(options ObjectStorageOptions) (normalizedObje
 	if !objectStorageBucketPattern.MatchString(bucket) || strings.Contains(bucket, "..") {
 		return normalizedObjectStorageOptions{}, errors.New("object storage bucket must be 3-63 lowercase letters, digits, dots, or hyphens, starting and ending with a letter or digit")
 	}
+	if err := validateObjectStorageBucketReservations(bucket); err != nil {
+		return normalizedObjectStorageOptions{}, err
+	}
 	prefix := strings.TrimSpace(options.Prefix)
 	prefix = strings.TrimSuffix(prefix, "/")
 	if prefix != "" {
@@ -126,6 +130,22 @@ func normalizeObjectStorageOptions(options ObjectStorageOptions) (normalizedObje
 		endpoint = normalized
 	}
 	return normalizedObjectStorageOptions{bucket: bucket, prefix: prefix, region: region, endpoint: endpoint}, nil
+}
+
+// validateObjectStorageBucketReservations rejects names S3 never assigns to a
+// bucket. Reserved suffixes stay accepted because access point aliases
+// (-s3alias, --ol-s3) and directory buckets (--x-s3) are valid in the
+// bucket parameter of object requests.
+func validateObjectStorageBucketReservations(bucket string) error {
+	if address := net.ParseIP(bucket); address != nil && address.To4() != nil {
+		return errors.New("object storage bucket must not be formatted as an IP address")
+	}
+	for _, reserved := range []string{"xn--", "sthree-", "amzn-s3-demo-"} {
+		if strings.HasPrefix(bucket, reserved) {
+			return fmt.Errorf("object storage bucket must not start with the reserved prefix %q", reserved)
+		}
+	}
+	return nil
 }
 
 func validateObjectStorageEndpoint(raw string) (string, error) {

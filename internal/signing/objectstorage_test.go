@@ -320,6 +320,8 @@ func TestNewObjectStorageStoreValidatesLocator(t *testing.T) {
 	}{
 		{"empty bucket", func(o *ObjectStorageOptions) { o.Bucket = "" }, "bucket"},
 		{"uppercase bucket", func(o *ObjectStorageOptions) { o.Bucket = "Team_Certs" }, "bucket"},
+		{"ip address bucket", func(o *ObjectStorageOptions) { o.Bucket = "192.168.1.1" }, "IP address"},
+		{"reserved prefix bucket", func(o *ObjectStorageOptions) { o.Bucket = "xn--certs" }, "reserved prefix"},
 		{"traversal prefix", func(o *ObjectStorageOptions) { o.Prefix = "../escape" }, "prefix"},
 		{"leading slash prefix", func(o *ObjectStorageOptions) { o.Prefix = "/asc" }, "prefix"},
 		{"bad region", func(o *ObjectStorageOptions) { o.Region = "US East" }, "region"},
@@ -338,6 +340,13 @@ func TestNewObjectStorageStoreValidatesLocator(t *testing.T) {
 				t.Fatal("NewObjectStorageStore() error = nil")
 			}
 		})
+	}
+	for _, bucket := range []string{"team-certs", "certs.example.com", "certs-ab12cd34-s3alias", "certs--use1-az4--x-s3"} {
+		options := valid
+		options.Bucket = bucket
+		if err := ValidateObjectStorageOptions(options); err != nil {
+			t.Fatalf("ValidateObjectStorageOptions(%q) error = %v", bucket, err)
+		}
 	}
 	if len(fake.Requests()) != 0 {
 		t.Fatal("locator validation contacted the bucket")

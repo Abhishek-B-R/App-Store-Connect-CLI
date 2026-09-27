@@ -170,7 +170,10 @@ Object keys use the git working tree layout exactly:
 no prefix is given. A bucket prefix and an encrypted git repository can
 therefore be mirrored byte for byte. One trailing slash on `--object-prefix` is
 accepted, and the prefix otherwise follows the shared prefix rules. The bucket
-must follow the S3 naming rules. `--object-endpoint` accepts an HTTPS origin
+must be 3-63 lowercase letters, digits, dots, or hyphens, must not look like an
+IPv4 address, and must not use a reserved S3 prefix (`xn--`, `sthree-`,
+`amzn-s3-demo-`). Reserved suffixes are accepted because access point aliases
+and directory bucket names are valid in object requests. `--object-endpoint` accepts an HTTPS origin
 without credentials, path, query, or fragment and switches to path-style
 addressing for S3-compatible services.
 
