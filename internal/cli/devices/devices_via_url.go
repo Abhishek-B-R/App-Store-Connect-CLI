@@ -54,6 +54,9 @@ type deviceURLServer struct {
 	// profile. A value is the normalized UDID the token is bound to after its
 	// first valid callback, or empty while unbound.
 	callbackTokens map[string]string
+	// stream, when set, receives one JSON receipt line per device arrival.
+	stream    io.Writer
+	streamErr error
 }
 
 func serveDeviceRegistration(ctx context.Context, options deviceURLServeOptions) (*asc.DeviceURLRegistrationResult, error) {
@@ -95,6 +98,7 @@ func serveDeviceRegistration(ctx context.Context, options deviceURLServeOptions)
 		client:    options.Client,
 		publicURL: publicURL,
 		seen:      map[string]struct{}{},
+		stream:    options.Stream,
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/enroll", serverState.enroll)
@@ -152,6 +156,9 @@ func serveDeviceRegistration(ctx context.Context, options deviceURLServeOptions)
 	if len(result.Failures) > 0 {
 		serveErr = errors.Join(serveErr, fmt.Errorf("%d device registration(s) failed", len(result.Failures)))
 	}
+	if serverState.streamErr != nil {
+		serveErr = errors.Join(serveErr, fmt.Errorf("write device receipt: %w", serverState.streamErr))
+	}
 	if serveErr != nil {
 		return result, serveErr
 	}
@@ -171,6 +178,8 @@ type deviceURLServeOptions struct {
 	Confirm        bool
 	OutputFile     string
 	Client         *asc.Client
+	// Stream, when non-nil, receives one JSON receipt line per device arrival.
+	Stream io.Writer
 }
 
 func (server *deviceURLServer) enroll(w http.ResponseWriter, r *http.Request) {
@@ -325,6 +334,7 @@ func (server *deviceURLServer) acceptDevice(ctx context.Context, token, udid, pr
 			// The token is spent once its device is recorded; replays are refused.
 			delete(server.callbackTokens, token)
 		}
+		server.streamArrival(record)
 	}()
 	if err := ctx.Err(); err != nil {
 		return record, err
@@ -365,6 +375,15 @@ func (server *deviceURLServer) acceptDevice(ctx context.Context, token, udid, pr
 	server.devices = append(server.devices, record)
 	server.outputRows = append(server.outputRows, deviceBatchRecord{UDID: udid, Name: name, Platform: server.platform})
 	return record, nil
+}
+
+// streamArrival writes one JSON receipt line for a device arrival. The caller
+// must hold server.mu so receipts are written whole and in arrival order.
+func (server *deviceURLServer) streamArrival(record asc.DeviceURLRegistration) {
+	if server.stream == nil || server.streamErr != nil {
+		return
+	}
+	server.streamErr = json.NewEncoder(server.stream).Encode(record)
 }
 
 func parseDeviceRegistrationCallback(body []byte) (string, string, error) {

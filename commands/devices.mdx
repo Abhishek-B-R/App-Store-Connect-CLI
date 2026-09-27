@@ -109,9 +109,12 @@ The registration URL is a bearer credential: share it only with intended testers
 
 `--ttl` must be positive. The command collects until that duration expires or it is interrupted, then writes one summary to stdout. The callback API requests use `ASC_TIMEOUT` and are canceled when the session ends. Keep `--output-file` for collect-only mode; it cannot be combined with `--confirm`.
 
+Add `--stream` with `--output json` to also write one JSON receipt line to stdout as each device arrives. Each line has the same fields as an entry in the summary's `devices` or `failures` arrays (`name`, `udid`, `platform`, `status`, and `deviceId` or `error` when set). `status` is `registered`, `collected`, `skipped`, or `failed`; a failed device that later retries successfully gets another line. The final summary follows as the last line. `--stream` cannot be combined with table or Markdown output or `--pretty`.
+
 ```bash theme={null}
 asc devices register --via-url --output-file ./devices.tsv --ttl 30m
 asc devices register --via-url --confirm --platform IOS --public-url "https://tunnel.example"
+asc devices register --via-url --confirm --stream --output json --public-url "https://tunnel.example"
 ```
 
 ### devices update

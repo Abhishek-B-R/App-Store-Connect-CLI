@@ -562,6 +562,129 @@ func TestDeviceURLCallbackTokensAreSingleUsePerProfile(t *testing.T) {
 	}
 }
 
+func readDeviceURLStreamLine(t *testing.T, lines <-chan string) string {
+	t.Helper()
+	select {
+	case line, ok := <-lines:
+		if !ok {
+			t.Fatal("stream closed before the next receipt")
+		}
+		return line
+	case <-time.After(5 * time.Second):
+		t.Fatal("no receipt streamed for the arrival")
+		return ""
+	}
+}
+
+func scanDeviceURLLines(r io.Reader) <-chan string {
+	lines := make(chan string, 16)
+	go func() {
+		defer close(lines)
+		scanner := bufio.NewScanner(r)
+		for scanner.Scan() {
+			lines <- scanner.Text()
+		}
+	}()
+	return lines
+}
+
+func TestDeviceURLStreamsReceiptPerArrival(t *testing.T) {
+	posts := 0
+	client := newDeviceURLTestClient(t, func(req *http.Request) *http.Response {
+		if req.Method == http.MethodGet {
+			return deviceURLJSON(http.StatusOK, `{"data":[]}`)
+		}
+		posts++
+		if posts == 2 {
+			return deviceURLJSON(http.StatusForbidden, `{"errors":[{"status":"403","code":"FORBIDDEN","title":"registration failed"}]}`)
+		}
+		return deviceURLJSON(http.StatusCreated, `{"data":{"type":"devices","id":"dev-1"}}`)
+	})
+	streamRead, streamWrite := io.Pipe()
+	t.Cleanup(func() { streamRead.Close() })
+	lines := scanDeviceURLLines(streamRead)
+	pageURL, cancel, done := startDeviceURLTestRunner(t, func(ctx context.Context) error {
+		defer streamWrite.Close()
+		_, err := serveDeviceRegistration(ctx, deviceURLServeOptions{Listen: "127.0.0.1:0", TTL: time.Minute, Platform: "IOS", Confirm: true, Client: client, Stream: streamWrite})
+		return err
+	})
+
+	for _, want := range []struct {
+		udid, status, deviceID string
+	}{
+		{"ABC123", "registered", "dev-1"},
+		{"DEF456", "failed", ""},
+	} {
+		postDeviceURLCallback(t, deviceURLProfileCallback(t, pageURL), want.udid)
+		var record asc.DeviceURLRegistration
+		line := readDeviceURLStreamLine(t, lines)
+		if err := json.Unmarshal([]byte(line), &record); err != nil {
+			t.Fatalf("streamed receipt is not one JSON object per line: %q: %v", line, err)
+		}
+		if record.UDID != want.udid || record.Status != want.status || record.DeviceID != want.deviceID || record.Platform != "IOS" {
+			t.Fatalf("streamed receipt = %#v, want %+v", record, want)
+		}
+		if want.status == "failed" && record.Error == "" {
+			t.Fatalf("failed receipt has no error: %#v", record)
+		}
+	}
+	// Rejected callbacks are not device arrivals and produce no receipt.
+	if status, _ := postDeviceURLCallback(t, strings.Replace(pageURL, "/enroll?", "/callback?", 1), "GHI789"); status != http.StatusForbidden {
+		t.Fatalf("session token callback status = %d", status)
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("session hid failed registration")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("server did not stop")
+	}
+	if extra, ok := <-lines; ok {
+		t.Fatalf("unexpected extra streamed receipt: %q", extra)
+	}
+}
+
+func TestDeviceURLCommandStreamsJSONLinesThenSummary(t *testing.T) {
+	stdoutRead, stdoutWrite, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	savedStdout := os.Stdout
+	os.Stdout = stdoutWrite
+	t.Cleanup(func() { os.Stdout = savedStdout; stdoutWrite.Close(); stdoutRead.Close() })
+	lines := scanDeviceURLLines(stdoutRead)
+
+	cmd := DevicesRegisterCommand()
+	path := filepath.Join(t.TempDir(), "devices.tsv")
+	if err := cmd.FlagSet.Parse([]string{"--via-url", "--stream", "--output", "json", "--output-file", path}); err != nil {
+		t.Fatal(err)
+	}
+	pageURL, cancel, done := startDeviceURLTestRunner(t, func(ctx context.Context) error { return cmd.Exec(ctx, nil) })
+	postDeviceURLCallback(t, deviceURLProfileCallback(t, pageURL), "ABC123")
+
+	// The arrival receipt reaches stdout while the session is still running.
+	var record asc.DeviceURLRegistration
+	if err := json.Unmarshal([]byte(readDeviceURLStreamLine(t, lines)), &record); err != nil {
+		t.Fatal(err)
+	}
+	if record.UDID != "ABC123" || record.Status != "collected" {
+		t.Fatalf("streamed receipt = %#v", record)
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	var summary asc.DeviceURLRegistrationResult
+	if err := json.Unmarshal([]byte(readDeviceURLStreamLine(t, lines)), &summary); err != nil {
+		t.Fatal(err)
+	}
+	if !summary.CollectOnly || len(summary.Devices) != 1 || summary.Devices[0] != record {
+		t.Fatalf("final summary = %#v", summary)
+	}
+}
+
 func TestDeviceURLProfileBoundsPendingCallbackTokens(t *testing.T) {
 	server := &deviceURLServer{token: "token", platform: "IOS", publicURL: "http://127.0.0.1:1", seen: map[string]struct{}{}, callbackTokens: map[string]string{}}
 	for i := 0; i < maxPendingDeviceCallbackTokens; i++ {
