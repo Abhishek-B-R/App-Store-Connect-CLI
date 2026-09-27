@@ -161,11 +161,34 @@ func NewPricingSetCommand(config PricingSetCommandConfig) *ffcli.Command {
 				BaseTerritoryID: baseTerritoryID,
 			})
 			if err != nil {
-				return fmt.Errorf("%s: %w", config.ErrorPrefix, err)
+				return explainAppPriceScheduleConflict(err, appPriceScheduleConflictInput{
+					ErrorPrefix:        config.ErrorPrefix,
+					AppID:              resolvedAppID,
+					PricePointID:       pricePointValue,
+					PriceSelectionFlag: priceSelectionFlag(tierValue, priceValue, freeValue),
+					BaseTerritoryID:    baseTerritoryID,
+					StartDate:          normalizedStartDate,
+					StartDateDefaulted: startDateDefaulted,
+				})
 			}
 
 			return printOutput(resp, *output.Output, *output.Pretty)
 		},
+	}
+}
+
+// priceSelectionFlag names the flag the operator used to choose the price.
+// ValidatePriceSelectionFlags has already ensured exactly one is set.
+func priceSelectionFlag(tier int, price string, free bool) string {
+	switch {
+	case free:
+		return "--free"
+	case tier > 0:
+		return "--tier"
+	case price != "":
+		return "--price"
+	default:
+		return "--price-point"
 	}
 }
 
