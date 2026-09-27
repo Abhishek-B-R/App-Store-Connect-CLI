@@ -231,7 +231,7 @@ Examples:
 func CertificatesGetCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("view", flag.ExitOnError)
 
-	id := fs.String("id", "", "Certificate ID")
+	id := shared.BindResourceIDFlag(fs, "id", "certificates", "Certificate ID")
 	include := fs.String("include", "", "Include related resources: passTypeId")
 	output := shared.BindOutputFlags(fs)
 
@@ -496,7 +496,7 @@ func csrCreateOnlyFlagsSet(fs *flag.FlagSet) bool {
 func CertificatesUpdateCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("update", flag.ExitOnError)
 
-	id := fs.String("id", "", "Certificate ID")
+	id := shared.BindResourceIDFlag(fs, "id", "certificates", "Certificate ID")
 	activated := fs.String("activated", "", "Set activated (true/false)")
 	output := shared.BindOutputFlags(fs)
 
@@ -551,7 +551,7 @@ Examples:
 func CertificatesRevokeCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("revoke", flag.ExitOnError)
 
-	id := fs.String("id", "", "Certificate ID")
+	id := shared.BindResourceIDFlag(fs, "id", "certificates", "Certificate ID")
 	confirm := fs.Bool("confirm", false, "Confirm revocation")
 	output := shared.BindOutputFlags(fs)
 

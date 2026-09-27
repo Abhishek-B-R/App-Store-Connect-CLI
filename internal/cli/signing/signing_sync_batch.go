@@ -344,6 +344,7 @@ func runSigningSyncBatch(ctx context.Context, client *asc.Client, options signin
 	result := SyncResult{
 		Operation:       "push",
 		RepoURL:         transport.Locator(),
+		Storage:         transport.Storage(),
 		ProfileType:     options.ProfileType,
 		Files:           make([]string, 0),
 		IdentityPresent: identity != nil,
@@ -383,12 +384,15 @@ func runSigningSyncBatch(ctx context.Context, client *asc.Client, options signin
 
 func signingSyncBatchPartialResult(options signingSyncBatchOptions, bundleIDs []string, targets []signingSyncBatchTarget, identity *signingIdentity) SyncResult {
 	locator := sanitizeRepoURLForOutput(options.RepoURL)
+	storage := gitSigningSyncStorage(options.RepoURL, options.Branch)
 	if options.Transport != nil {
 		locator = options.Transport.Locator()
+		storage = options.Transport.Storage()
 	}
 	result := SyncResult{
 		Operation:       "push",
 		RepoURL:         locator,
+		Storage:         storage,
 		ProfileType:     options.ProfileType,
 		Files:           []string{},
 		IdentityPresent: identity != nil,

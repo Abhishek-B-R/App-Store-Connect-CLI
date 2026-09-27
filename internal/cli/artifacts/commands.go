@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/peterbourgon/ff/v3/ffcli"
@@ -25,10 +26,13 @@ func IPAInfoCommand() *ffcli.Command {
 		Name:       "ipa-info",
 		ShortUsage: "asc ipa-info --path PATH [--include-entitlements] [--include-profile]",
 		ShortHelp:  "Inspect a local IPA without contacting App Store Connect.",
-		LongHelp: `Inspect a local IPA and print bundle identity, nested bundles, and optional profile fields.
+		LongHelp: `Inspect a local IPA and print bundle identity, signer identity, nested bundles, and optional profile fields.
 
 The command does not upload the artifact or call Apple. An unreadable archive or an IPA without an embedded profile exits 1 after writing a receipt.
-Status readable means metadata was parsed. Status unsigned means no embedded profile was found; it is not a code-signature verdict. Signatures and signer identity are not verified, and signatureVerification is always not-verified.
+Status readable means metadata was parsed. Status unsigned means no embedded profile was found; it is not a code-signature verdict.
+codeSignature classifies the main executable's embedded code signature as signed, ad-hoc, unsigned, or unreadable. For a universal binary, the slice stored first is read.
+signer describes the leaf certificate in a signed executable's CMS signature and is null otherwise. teamId comes from that certificate, or from the embedded profile when no certificate provides one.
+An unreadable code signature prints a warning to stderr and does not change the exit code. Signatures and certificate chains are not verified, and signatureVerification is always not-verified.
 
 Examples:
   asc ipa-info --path ./App.ipa --output json
@@ -57,10 +61,13 @@ func PKGInfoCommand() *ffcli.Command {
 		Name:       "pkg-info",
 		ShortUsage: "asc pkg-info --path PATH",
 		ShortHelp:  "Inspect a local flat component package without contacting Apple.",
-		LongHelp: `Inspect a local flat xar .pkg and print the product identifier, version, install location, and component bundle identifiers.
+		LongHelp: `Inspect a local flat xar .pkg and print the product identifier, version, install location, component bundle identifiers, and signer identity.
 
 The command does not expand the package onto disk or call Apple. An unreadable package exits 1 after writing a receipt.
-Status readable means PackageInfo was parsed. Package signatures and signer identity are not verified, and signatureVerification is always not-verified.
+Status readable means PackageInfo was parsed. packageSignature is signed, unsigned, or unreadable, based on the certificates in the package's table of contents.
+signer describes the first listed signing certificate and is null for an unsigned package. An unsigned package still exits 0.
+Signature fields are also reported on an unreadable receipt when the table of contents was read, for example for a signed product archive without PackageInfo.
+An unreadable package signature prints a warning to stderr and does not change the exit code. Package signatures and certificate chains are not verified, and signatureVerification is always not-verified.
 
 Examples:
   asc pkg-info --path ./App.pkg --output json`,
@@ -122,6 +129,9 @@ func runArtifactInfo(ctx context.Context, args []string, config artifactInfoConf
 		if printErr := shared.PrintOutput(receipt, config.Output, config.Pretty); printErr != nil {
 			return printErr
 		}
+		if manifest.CodeSignatureError != "" {
+			fmt.Fprintf(os.Stderr, "Warning: ipa-info: code signature is unreadable: %s\n", manifest.CodeSignatureError)
+		}
 		if inspectErr != nil || manifest.Status != "readable" {
 			if inspectErr == nil {
 				inspectErr = fmt.Errorf("IPA has no embedded profile; code signature was not verified")
@@ -134,6 +144,9 @@ func runArtifactInfo(ctx context.Context, args []string, config artifactInfoConf
 		receipt := pkgReceipt(path, manifest)
 		if printErr := shared.PrintOutput(receipt, config.Output, config.Pretty); printErr != nil {
 			return printErr
+		}
+		if manifest.PackageSignatureError != "" {
+			fmt.Fprintf(os.Stderr, "Warning: pkg-info: package signature is unreadable: %s\n", manifest.PackageSignatureError)
 		}
 		if inspectErr != nil || manifest.Status != "readable" {
 			if inspectErr == nil {
@@ -161,6 +174,8 @@ func ipaReceipt(path string, manifest artifacts.IPAManifest) *asc.ArtifactIPAInf
 		SignerCommonName:      manifest.SignerCommonName,
 		Status:                manifest.Status,
 		NestedBundles:         make([]asc.ArtifactNestedBundle, 0, len(manifest.NestedBundles)),
+		CodeSignature:         manifest.CodeSignature,
+		Signer:                signerReceipt(manifest.Signer),
 	}
 	for _, nested := range manifest.NestedBundles {
 		info.NestedBundles = append(info.NestedBundles, asc.ArtifactNestedBundle{
@@ -192,7 +207,27 @@ func pkgReceipt(path string, manifest artifacts.PKGManifest) *asc.ArtifactPKGInf
 		InstallLocation:       manifest.InstallLocation,
 		BundleIDs:             manifest.BundleIDs,
 		SignerCommonName:      manifest.SignerCommonName,
+		TeamID:                manifest.TeamID,
 		Status:                manifest.Status,
+		PackageSignature:      manifest.PackageSignature,
+		Signer:                signerReceipt(manifest.Signer),
+	}
+}
+
+func signerReceipt(signer *artifacts.SignerIdentity) *asc.ArtifactSigner {
+	if signer == nil {
+		return nil
+	}
+	return &asc.ArtifactSigner{
+		CommonName:        signer.CommonName,
+		TeamID:            signer.TeamID,
+		Organization:      signer.Organization,
+		IssuerCommonName:  signer.IssuerCommonName,
+		SerialNumber:      signer.SerialNumber,
+		NotBefore:         signer.NotBefore,
+		NotAfter:          signer.NotAfter,
+		SHA1Fingerprint:   signer.SHA1Fingerprint,
+		SHA256Fingerprint: signer.SHA256Fingerprint,
 	}
 }
 

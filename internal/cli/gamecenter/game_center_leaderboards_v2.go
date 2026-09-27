@@ -242,7 +242,7 @@ Examples:
 func GameCenterLeaderboardVersionsV2GetCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("view", flag.ExitOnError)
 
-	versionID := fs.String("id", "", "Game Center leaderboard version ID")
+	versionID := shared.BindResourceIDFlag(fs, "id", "gameCenterLeaderboardVersions", "Game Center leaderboard version ID")
 	output := shared.BindOutputFlags(fs)
 
 	return &ffcli.Command{
@@ -429,7 +429,7 @@ Examples:
 func GameCenterLeaderboardLocalizationsV2GetCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("view", flag.ExitOnError)
 
-	localizationID := fs.String("id", "", "Game Center leaderboard localization ID")
+	localizationID := shared.BindResourceIDFlag(fs, "id", "gameCenterLeaderboardLocalizations", "Game Center leaderboard localization ID")
 	output := shared.BindOutputFlags(fs)
 
 	return &ffcli.Command{
@@ -561,7 +561,7 @@ Examples:
 func GameCenterLeaderboardLocalizationsV2UpdateCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("update", flag.ExitOnError)
 
-	localizationID := fs.String("id", "", "Game Center leaderboard localization ID")
+	localizationID := shared.BindResourceIDFlag(fs, "id", "gameCenterLeaderboardLocalizations", "Game Center leaderboard localization ID")
 	name := fs.String("name", "", "Display name for the leaderboard in this locale")
 	formatterOverride := fs.String("formatter-override", "", "Override the default formatter")
 	formatterSuffix := fs.String("formatter-suffix", "", "Suffix to append to formatted score")
@@ -647,7 +647,7 @@ Examples:
 func GameCenterLeaderboardLocalizationsV2DeleteCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("delete", flag.ExitOnError)
 
-	localizationID := fs.String("id", "", "Game Center leaderboard localization ID")
+	localizationID := shared.BindResourceIDFlag(fs, "id", "gameCenterLeaderboardLocalizations", "Game Center leaderboard localization ID")
 	confirm := fs.Bool("confirm", false, "Confirm deletion")
 	output := shared.BindOutputFlags(fs)
 
@@ -777,7 +777,7 @@ Examples:
 func GameCenterLeaderboardImagesV2GetCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("view", flag.ExitOnError)
 
-	imageID := fs.String("id", "", "Game Center leaderboard image ID")
+	imageID := shared.BindResourceIDFlag(fs, "id", "gameCenterLeaderboardImages", "Game Center leaderboard image ID")
 	localizationID := shared.BindResourceIDFlag(fs, "localization-id", "gameCenterLeaderboardLocalizations", "Game Center leaderboard localization ID")
 	output := shared.BindOutputFlags(fs)
 
@@ -834,7 +834,7 @@ Examples:
 func GameCenterLeaderboardImagesV2DeleteCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("delete", flag.ExitOnError)
 
-	imageID := fs.String("id", "", "Game Center leaderboard image ID")
+	imageID := shared.BindResourceIDFlag(fs, "id", "gameCenterLeaderboardImages", "Game Center leaderboard image ID")
 	confirm := fs.Bool("confirm", false, "Confirm deletion")
 	output := shared.BindOutputFlags(fs)
 

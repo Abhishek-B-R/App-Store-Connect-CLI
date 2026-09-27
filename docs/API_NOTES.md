@@ -170,6 +170,17 @@ the App Store Connect web-client source captured for issue #2299:
 - `asc web apps delete` uses this collection for the "removed from sale in all territories" preflight. The public API counterpart is `/v2/appAvailabilities/{id}/territoryAvailabilities`.
 - `asc web removed-apps restore` uses PATCH `/iris/v1/apps/{id}` with `removed:false`, verifies the app is no longer removed, then POSTs `/iris/v1/userAppPermissions` with `GRANT` (full) or `REVOKE` (limited) for `ALL_SILOABLE_USERS`. Permission writes are skipped when PATCH or verification fails.
 
+## App price schedules (`POST /v1/appPriceSchedules`)
+
+- The POST is the only write on the resource and replaces the app's whole schedule. Live runs against disposable app `6759231657` on 2026-09-26 and 2026-09-27 (each one snapshot, attempts, restore, and verification in a single serialized session) returned HTTP 409 for each of these causes. The raw bodies are checked in under `internal/cli/cmdtest/testdata/pricing_schedule_create_409/`, byte for byte including Apple's per-response error `id`.
+  - A manual price whose `startDate` is before today: `ENTITY_ERROR.INVALID_START_DATE`, detail `Interval can not have a start date in the past`.
+  - A single manual price whose `startDate` is after today: `ENTITY_ERROR.INVALID_START_DATE`, detail `Entire timeline must be covered for USA. The first interval has a start date 2026-10-26T00:00 in the future`. The request must cover the timeline from today, so a one-price request cannot schedule a future change; this also failed when the existing schedule already had a current price.
+  - A price point from another territory than `baseTerritory` (a USA price point with base territory FRA): `ENTITY_ERROR.BASE_TERRITORY_INTERVAL_REQUIRED`, detail `There must be at least one manual price for the base territory.`
+  - An unknown price point ID, including a valid price point of another app: `ENTITY_ERROR.NOT_FOUND`, detail `The resource 'appPricePoints' with id '…' was not found.`
+- App Store Connect's "today" is not the UTC date. At 23:22 UTC on 2026-09-26, `startDate` 2026-09-26 returned 201. At 00:03 UTC on 2026-09-27, `startDate` 2026-09-27 (the UTC date, and the CLI's default) returned the future-start 409 above, while 2026-09-26 (the US Pacific date) returned 201. Both observations match the US Pacific date; the exact time zone is not documented. Between UTC midnight and US Pacific midnight, the CLI's UTC default for `--start-date` is therefore rejected.
+- An accepted `startDate` of today is stored as `startDate: null`. Omitting `startDate` also returned 201 and restored the original `startDate: null` / `endDate: null` interval.
+- `asc pricing schedule create` and `asc app-setup pricing set` explain these four causes with a specific message, keep Apple's response after it, add an allowlisted diagnostic (`invalid_input` on `--start-date`, `conflicting_input` on `--base-territory`, or `resource_not_found` on the price flag), and keep the 409 exit code and `api_conflict` telemetry kind. Any other 409, including the same code with an unrecognized detail, prints exactly as before.
+
 ## Developer Portal iCloud containers
 
 - `asc web icloud-containers list` reads the modern Developer Portal collection through the cookie-authenticated web session. The logical request is `GET /services-account/v1/cloudContainers?filter[AND][hidden]=false` (or `true` with `--hidden`); Apple's browser transport sends it as `POST` with `X-HTTP-Method-Override: GET`.

@@ -15,6 +15,16 @@ type SigningSyncTargetResult struct {
 	Files                    []string `json:"files"`
 }
 
+// SigningSyncStorage identifies where a signing sync operation keeps its
+// encrypted artifacts. Location is the same non-secret locator reported in
+// repoUrl. Branch is set only for git storage. There is no version field
+// because one push can write many objects, each with its own version.
+type SigningSyncStorage struct {
+	Kind     string `json:"kind"`
+	Location string `json:"location"`
+	Branch   string `json:"branch,omitempty"`
+}
+
 // SigningSyncResult is the structured output for signing sync operations.
 // The singular BundleID field is retained for the historical single-target
 // and pull JSON shape. Batch output marks itself explicitly so that an empty
@@ -22,6 +32,7 @@ type SigningSyncTargetResult struct {
 type SigningSyncResult struct {
 	Operation                string                    `json:"operation"`
 	RepoURL                  string                    `json:"repoUrl"`
+	Storage                  *SigningSyncStorage       `json:"storage,omitempty"`
 	BundleID                 string                    `json:"bundleId"`
 	ProfileType              string                    `json:"profileType"`
 	Files                    []string                  `json:"files"`
@@ -56,6 +67,7 @@ func (result SigningSyncResult) MarshalJSON() ([]byte, error) {
 	type signingSyncResultJSON struct {
 		Operation                string                    `json:"operation"`
 		RepoURL                  string                    `json:"repoUrl"`
+		Storage                  *SigningSyncStorage       `json:"storage,omitempty"`
 		BundleID                 *string                   `json:"bundleId,omitempty"`
 		ProfileType              string                    `json:"profileType"`
 		Files                    []string                  `json:"files"`
@@ -73,6 +85,7 @@ func (result SigningSyncResult) MarshalJSON() ([]byte, error) {
 	return json.Marshal(signingSyncResultJSON{
 		Operation:                result.Operation,
 		RepoURL:                  result.RepoURL,
+		Storage:                  result.Storage,
 		BundleID:                 bundleID,
 		ProfileType:              result.ProfileType,
 		Files:                    result.Files,
@@ -90,7 +103,7 @@ func (result SigningSyncResult) MarshalJSON() ([]byte, error) {
 }
 
 func signingSyncRows(result *SigningSyncResult) ([]string, [][]string) {
-	summaryHeaders := []string{"Operation", "Repo URL", "Bundle ID", "Profile Type", "Files", "Identity Present"}
+	summaryHeaders := []string{"Operation", "Repo URL", "Storage", "Bundle ID", "Profile Type", "Files", "Identity Present"}
 	if result == nil {
 		return summaryHeaders, nil
 	}
@@ -98,6 +111,7 @@ func signingSyncRows(result *SigningSyncResult) ([]string, [][]string) {
 		return summaryHeaders, [][]string{{
 			result.Operation,
 			result.RepoURL,
+			signingSyncStorageKind(result.Storage),
 			result.BundleID,
 			result.ProfileType,
 			joinSigningList(result.Files),
@@ -115,4 +129,11 @@ func signingSyncRows(result *SigningSyncResult) ([]string, [][]string) {
 		})
 	}
 	return []string{"Bundle ID", "Profile Type", "Profile Path", "Profile Created", "Files"}, rows
+}
+
+func signingSyncStorageKind(storage *SigningSyncStorage) string {
+	if storage == nil {
+		return ""
+	}
+	return storage.Kind
 }

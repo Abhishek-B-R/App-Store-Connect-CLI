@@ -106,6 +106,7 @@ Examples:
   asc xcode-cloud artifacts view --id "ARTIFACT_ID" --output table`,
 		IDFlag:      "id",
 		IDUsage:     "Artifact ID",
+		IDType:      "ciArtifacts",
 		ErrorPrefix: "xcode-cloud artifacts view",
 		ContextTimeout: func(ctx context.Context) (context.Context, context.CancelFunc) {
 			return contextWithXcodeCloudTimeout(ctx, 0)
@@ -120,7 +121,7 @@ Examples:
 func XcodeCloudArtifactsDownloadCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("download", flag.ExitOnError)
 
-	id := fs.String("id", "", "Artifact ID")
+	id := shared.BindResourceIDFlag(fs, "id", "ciArtifacts", "Artifact ID")
 	path := fs.String("path", "", "Output file path for the artifact")
 	overwrite := fs.Bool("overwrite", false, "Overwrite existing file")
 	output := shared.BindOutputFlags(fs)

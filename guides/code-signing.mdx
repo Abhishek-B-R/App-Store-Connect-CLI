@@ -190,7 +190,9 @@ identity_path="$(
 keychain_path="$signing_tmp/release.keychain-db"
 keychain_password_file="$signing_tmp/keychain-password"
 cleanup_signing() {
-  /usr/bin/security delete-keychain "$keychain_path" >/dev/null 2>&1 || true
+  asc signing keychain delete \
+    --keychain "$keychain_path" \
+    --confirm >/dev/null 2>&1 || true
   rm -f "$password_file" "$keychain_password_file"
   rmdir "$signing_tmp" >/dev/null 2>&1 || true
 }
@@ -230,6 +232,156 @@ The keychain remains available after the command succeeds. Keep archive and
 export inside the lifetime of the cleanup trap on disposable CI workers; for a
 long-lived machine, omit the trap only when the dedicated keychain is intended
 to remain. Do not upload the decrypted directory, password files, or keychain.
+
+## Bootstrap a fresh CI runner
+
+A fresh macOS runner starts with an App Store Connect API key and nothing else.
+Before `xcodebuild` can sign, it needs a private key with its certificate, a
+provisioning profile for every target, a keychain that `codesign` can use, and
+project build settings that name those profiles. `asc` covers each step:
+
+| Step | Command |
+| --- | --- |
+| Authenticate | `ASC_KEY_ID`, `ASC_ISSUER_ID`, and `ASC_PRIVATE_KEY_B64` from the CI secret store |
+| Create or obtain the identity and profiles | First run: `asc signing fetch --create-missing --create-missing-certificate`. Later runs: `asc signing sync pull` |
+| Keep the identity for later runs | `asc signing sync push --identity ...` |
+| Install the identity and profiles | `asc signing keychain install --confirm` and `asc profiles local install` |
+| Point the project at the profiles | `asc xcode signing plan --profile ...`, then `asc xcode signing apply --confirm` |
+| Archive and export | `asc xcode archive`, then `asc xcode export --export-options ...` |
+| Clean up | `asc signing keychain delete --confirm` |
+
+Provide the API key through [environment variables](/configuration/environment-variables)
+from the CI secret store. The key's role must allow creating certificates and
+profiles for the first run.
+
+### First run: one pass from API key to signed archive
+
+When the team has no active certificate of the required type, one
+`signing fetch` creates the private key, certificate signing request,
+certificate, profile, and password-protected `.p12`. The private key exists only on this
+runner, so the script pushes the new identity to the encrypted store before it
+builds anything. A disposable runner that skips that push loses the key when
+the job ends.
+
+```bash  theme={null}
+set -eo pipefail
+set +x
+umask 077
+signing_tmp="$(mktemp -d "$RUNNER_TEMP/asc-signing.XXXXXX")"
+p12_password_file="$signing_tmp/p12-password"
+sync_password_file="$signing_tmp/repository-password"
+keychain_path="$signing_tmp/release.keychain-db"
+keychain_password_file="$signing_tmp/keychain-password"
+cleanup_signing() {
+  asc signing keychain delete \
+    --keychain "$keychain_path" \
+    --confirm >/dev/null 2>&1 || true
+  rm -f "$p12_password_file" "$sync_password_file" "$keychain_password_file"
+  rmdir "$signing_tmp" >/dev/null 2>&1 || true
+}
+trap cleanup_signing EXIT
+openssl rand -base64 32 > "$p12_password_file"
+printf '%s' "$SIGNING_SYNC_PASSWORD" > "$sync_password_file"
+mkdir -p .asc/signing .asc/artifacts
+chmod 700 .asc/signing
+
+asc signing fetch \
+  --bundle-id com.example.app \
+  --profile-type IOS_APP_STORE \
+  --create-missing \
+  --create-missing-certificate \
+  --identity-password-file "$p12_password_file" \
+  --output .asc/signing/bootstrap \
+  --format json > .asc/signing/fetch-result.json
+
+p12_path="$(jq -er '.p12Path' .asc/signing/fetch-result.json)"
+profile_path="$(jq -er '.profileFile' .asc/signing/fetch-result.json)"
+
+asc signing sync push \
+  --bundle-id com.example.app \
+  --profile-type IOS_APP_STORE \
+  --repo git@github.com:team/signing.git \
+  --password-file "$sync_password_file" \
+  --identity "$p12_path" \
+  --identity-password-file "$p12_password_file" \
+  --output json
+
+openssl rand -base64 32 > "$keychain_password_file"
+asc signing keychain install \
+  --identity "$p12_path" \
+  --identity-password-file "$p12_password_file" \
+  --keychain "$keychain_path" \
+  --keychain-password-file "$keychain_password_file" \
+  --add-to-search-list \
+  --confirm \
+  --output json
+
+asc profiles local install \
+  --path "$profile_path" \
+  --output json
+
+asc xcode signing plan \
+  --project Example.xcodeproj \
+  --profile "$profile_path" \
+  --configuration Release \
+  --export-options-out .asc/artifacts/ExportOptions.plist \
+  --output json > .asc/signing/xcode-plan.json
+jq -e '.ready' .asc/signing/xcode-plan.json >/dev/null
+
+asc xcode signing apply \
+  --plan .asc/xcode/signing/plan.json \
+  --confirm \
+  --output json
+
+asc xcode archive \
+  --project Example.xcodeproj \
+  --scheme Example \
+  --configuration Release \
+  --archive-path .asc/artifacts/Example.xcarchive
+
+asc xcode export \
+  --archive-path .asc/artifacts/Example.xcarchive \
+  --export-options .asc/artifacts/ExportOptions.plist \
+  --ipa-path .asc/artifacts/Example.ipa
+```
+
+Read these boundaries before relying on the script:
+
+* A certificate is created only when no active certificate of the inferred type
+  exists. Otherwise the receipt reports `certificateCreationState: "reused"` and
+  has no `p12Path`, so the `jq -e` lookup stops the script under `set -e`. The
+  runner cannot sign with a certificate whose private key lives elsewhere; push that identity
+  once from the machine that holds it, as in [Shared App Store identity](#shared-app-store-identity).
+* `--create-missing-certificate` fetches one bundle ID and cannot be combined
+  with `--match-extensions`. For an app with extensions, run a second
+  `asc signing fetch --match-extensions --create-missing` into another output
+  directory after the certificate exists. Pass every `profileFile` from its
+  `results` to `profiles local install` and to `xcode signing plan` as repeated
+  `--profile` flags. Push the identity for all of those bundle IDs with
+  `signing sync push --bundle-id com.example.app --match-extensions`, or with a
+  `--targets-file` manifest that lists each bundle ID as in
+  [Shared App Store identity](#shared-app-store-identity); the manifest takes
+  bundle IDs, not profile paths.
+* `.asc/signing/bootstrap` holds the private key, CSR, and `.p12`. Do not upload
+  it as an artifact. The `.p12` password in this script is a generated secret
+  that exists only for this job; the pushed copy is re-protected with the
+  store password.
+* `xcode signing plan` exits 0 with `ready: false` when a target has no matching
+  profile, so the script checks `ready`. `xcode signing apply` edits the
+  checked-out project file and refuses a blocked or stale plan.
+* `sync push` can also create the identity itself:
+  `asc signing sync push --create-missing --create-missing-certificate --identity-password-file PATH`.
+  Use that form in a one-time bootstrap job when you do not want the first run
+  to build.
+
+### Every later run
+
+Once the store holds the identity, a fresh runner pulls it instead of creating
+another certificate. The [CI example](/commands/signing#ci-example) runs
+`signing sync pull`, `signing keychain install`, `profiles local install`,
+`xcode signing plan --profile`, `xcode signing apply`, `xcode archive`, and
+`xcode export` in one step, and removes the keychain afterward. A pulled `.p12`
+is protected by the store password, not by the bootstrap `.p12` password.
 
 ## Registered-device release testing
 
@@ -289,6 +441,6 @@ For an archive with extensions, App Clips, Watch apps, or other embedded targets
 
 ## What the encrypted store does not do
 
-The current store uses Git. It does not renew certificates, delete stale encrypted assets, assign different settings per target, or manage the later lifecycle of installed persistent keychains. Treat those as separate reviewed operations. Renew first, push the successor identity, verify a clean pull, then revoke or deactivate; the ordering is under [Rotation and expiry](/commands/signing#rotation-and-expiry).
+The default store is Git; `--storage gitlab-secure-files` and `--storage aws-secrets-manager` are experimental alternatives that hold the same ciphertext, and password rotation stays Git-only. The store does not renew certificates, delete stale encrypted assets, or assign different profile types or device sets per target. Automatic certificate and profile renewal, bulk cleanup, device refresh, and an object-storage backend are planned but not available yet. Per-target Xcode build settings come from `xcode signing plan --profile`, and the dedicated keychain lifecycle is under [Manage a dedicated keychain](/commands/signing#manage-a-dedicated-keychain). Treat certificate rotation as a separate reviewed operation. Renew first, push the successor identity, verify a clean pull, then revoke or deactivate; the ordering is under [Rotation and expiry](/commands/signing#rotation-and-expiry).
 
 Read the [signing command reference](/commands/signing) before the first live push; it includes file-permission rules, exact output fields, failure boundaries, profile maintenance, and recovery behavior.
