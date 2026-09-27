@@ -351,13 +351,20 @@ func TestManagedExportInventoryDescriptorBound(t *testing.T) {
 	if runtime.GOOS != "darwin" && runtime.GOOS != "linux" {
 		t.Skip("descriptor inventory requires /dev/fd")
 	}
+	// Count names only: os.ReadDir stats each entry, and on macOS the entry for
+	// the descriptor used to read /dev/fd can be closed before it is stated.
 	count := func() int {
 		t.Helper()
-		entries, err := os.ReadDir("/dev/fd")
+		dir, err := os.Open("/dev/fd")
 		if err != nil {
 			t.Fatal(err)
 		}
-		return len(entries)
+		defer dir.Close()
+		names, err := dir.Readdirnames(-1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return len(names)
 	}
 	root, err := rootfs.New(t.TempDir())
 	if err != nil {
