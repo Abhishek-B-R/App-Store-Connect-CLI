@@ -85,21 +85,30 @@ func explainAppPriceScheduleConflict(err error, input appPriceScheduleConflictIn
 const appPriceScheduleTodayHint = "App Store Connect used the US Pacific date as today in live checks, " +
 	"so for several hours after UTC midnight it rejects the UTC date as in the future."
 
+// appPriceScheduleDefaultDateHint explains a rejected default start date. The
+// default is already today's US Pacific date, so a rejection points at the
+// local clock or at App Store Connect using another, undocumented time zone.
+const appPriceScheduleDefaultDateHint = "App Store Connect used the US Pacific date as today in live checks, " +
+	"but its time zone is not documented. Check the system clock, or pass --start-date with the date App Store Connect accepts as today."
+
 func pastStartDateGuidance(input appPriceScheduleConflictInput) string {
-	subject := fmt.Sprintf("--start-date %s is in the past.", input.StartDate)
 	if input.StartDateDefaulted {
-		subject = fmt.Sprintf("App Store Connect treats the default start date %s (today, UTC) as in the past.", input.StartDate)
+		return fmt.Sprintf(
+			"App Store Connect treats the default start date %s (today in US Pacific time) as in the past. %s",
+			input.StartDate,
+			appPriceScheduleDefaultDateHint,
+		)
 	}
-	return subject + " Pass --start-date with today's date in US Pacific time. " + appPriceScheduleTodayHint
+	return fmt.Sprintf("--start-date %s is in the past.", input.StartDate) +
+		" Pass --start-date with today's date in US Pacific time. " + appPriceScheduleTodayHint
 }
 
 func futureStartDateGuidance(input appPriceScheduleConflictInput) string {
 	if input.StartDateDefaulted {
 		return fmt.Sprintf(
-			"App Store Connect treats the default start date %s (today, UTC) as in the future. "+
-				"Retry with --start-date set to today's date in US Pacific time. %s",
+			"App Store Connect treats the default start date %s (today in US Pacific time) as in the future. %s",
 			input.StartDate,
-			appPriceScheduleTodayHint,
+			appPriceScheduleDefaultDateHint,
 		)
 	}
 	return fmt.Sprintf(
