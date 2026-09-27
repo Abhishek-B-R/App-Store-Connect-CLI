@@ -4177,13 +4177,8 @@ func validateMatrixFrameMappingForSimulator(matrixDevice, frame string, simulato
 			message: "simulator family could not be identified",
 		}
 	}
-	if actualFamily == "ipad" {
-		return &matrixFrameMappingError{
-			device:  matrixDevice,
-			code:    matrixPreflightFrameMismatch,
-			message: "configured frame does not match simulator family",
-		}
-	}
+	// iPad simulators pass only with an iPad frame; the family check below
+	// rejects any other pairing.
 	if actualFamily != frameDeviceFamily(parsed) {
 		return &matrixFrameMappingError{
 			device:  matrixDevice,

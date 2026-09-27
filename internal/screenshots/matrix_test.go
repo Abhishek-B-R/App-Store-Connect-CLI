@@ -886,6 +886,25 @@ func TestValidateMatrixFrameMappingRejectsTabletFrameForPhoneSimulator(t *testin
 	}
 }
 
+func TestValidateMatrixFrameMappingAcceptsTabletFrameForIPadSimulator(t *testing.T) {
+	ipad := matrixSimulatorDevice{
+		Name:                 "iPad Pro 13-inch (M4)",
+		DeviceTypeIdentifier: "com.apple.CoreSimulator.SimDeviceType.iPad-Pro-13-inch-M4-8GB",
+	}
+	for _, frame := range []string{"ipad-pro-13", "ipad-pro-11", "ipad-air-13", "ipad-air-11", "ipad-mini"} {
+		if err := validateMatrixFrameMappingForSimulator("tablet", frame, ipad); err != nil {
+			t.Fatalf("validateMatrixFrameMappingForSimulator(%q) error = %v, want iPad frame accepted", frame, err)
+		}
+	}
+	for _, frame := range []string{"iphone-17-pro", "watch-ultra-3", "apple-tv", "mac"} {
+		err := validateMatrixFrameMappingForSimulator("tablet", frame, ipad)
+		var mappingErr *matrixFrameMappingError
+		if !errors.As(err, &mappingErr) || mappingErr.code != matrixPreflightFrameMismatch {
+			t.Fatalf("validateMatrixFrameMappingForSimulator(%q) error = %v, want frame family mismatch", frame, err)
+		}
+	}
+}
+
 func TestCheckMatrixDeviceRejectsOversizedInventory(t *testing.T) {
 	skipWindowsUnixExecutableFixtures(t)
 	binDir := t.TempDir()
