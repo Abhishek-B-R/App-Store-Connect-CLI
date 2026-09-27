@@ -152,18 +152,32 @@ func TestShotsValidationDiagnostics(t *testing.T) {
 			wantParameter: "--config",
 		},
 		{
-			name: "frame bg-color with noncanvas device",
+			name: "frame unsupported frame color",
 			command: func() interface {
 				ParseAndRun(context.Context, []string) error
 			} {
 				return ShotsFrameCommand()
 			},
-			args:          []string{"--input", "/tmp/raw.png", "--bg-color", "#000000"},
-			wantError:     flag.ErrHelp.Error(),
-			wantStderr:    "Error: --bg-color only applies to canvas devices (e.g. --device mac)\n",
+			args:          []string{"--input", "/tmp/raw.png", "--device", "iphone-17", "--frame-color", "gold"},
+			wantError:     `--frame-color: unsupported frame color "gold" for device iphone-17 (allowed: white, black, lavender, mist-blue, sage)`,
+			wantStderr:    `Error: --frame-color: unsupported frame color "gold" for device iphone-17 (allowed: white, black, lavender, mist-blue, sage)` + "\n",
+			wantUsage:     true,
+			wantCode:      shared.DiagnosticInvalidInput,
+			wantParameter: "--frame-color",
+		},
+		{
+			name: "frame input dir with input",
+			command: func() interface {
+				ParseAndRun(context.Context, []string) error
+			} {
+				return ShotsFrameCommand()
+			},
+			args:          []string{"--input", "/tmp/raw.png", "--input-dir", "/tmp/raw"},
+			wantError:     "use either --input, --input-dir, or --config",
+			wantStderr:    "Error: use either --input, --input-dir, or --config\n",
 			wantUsage:     true,
 			wantCode:      shared.DiagnosticConflictingInput,
-			wantParameter: "--bg-color",
+			wantParameter: "--input-dir",
 		},
 		{
 			name: "frame name with path separators",
