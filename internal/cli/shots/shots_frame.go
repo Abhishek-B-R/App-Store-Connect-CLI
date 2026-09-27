@@ -40,7 +40,13 @@ var watchUnsupportedFrameFlags = []string{
 	"title-color",
 }
 
-var shotsFrameFn = screenshots.Frame
+// shotsFrameFn frames one --input, anchoring the output directory itself.
+// shotsFrameIntoFn frames into an output root the caller retains, so every
+// --input-dir file publishes into the directory selected at the start.
+var (
+	shotsFrameFn     = screenshots.Frame
+	shotsFrameIntoFn = screenshots.FrameIntoOutputRoot
+)
 
 // ShotsFrameCommand returns the screenshots frame subcommand.
 func ShotsFrameCommand() *ffcli.Command {
@@ -358,7 +364,7 @@ framed screenshots whenever the YAML config or referenced raw assets change.`,
 					openInput := func(ctx context.Context) (*screenshots.FrameInputSnapshot, error) {
 						return screenshots.OpenFrameInputSnapshot(ctx, request.InputPath)
 					}
-					result, frameErr := frameSnapshot(timeoutCtx, openInput, request, settings, &state, root)
+					result, frameErr := frameSnapshot(timeoutCtx, openInput, request, settings, &state, root, nil)
 					if frameErr != nil {
 						return fmt.Errorf("screenshots frame: %w", frameErr)
 					}
@@ -453,8 +459,9 @@ type frameInputOpener func(context.Context) (*screenshots.FrameInputSnapshot, er
 // frameSnapshot renders a protected snapshot of the input opened by open.
 // With a non-nil state it skips the render when state records the same
 // fingerprint and output bytes, and saves state after a successful render;
-// the caller then holds the resume lock and owns state.
-func frameSnapshot(ctx context.Context, open frameInputOpener, request screenshots.FrameRequest, settings frameRenderSettings, state *screenshots.FrameResumeState, root rootfs.Root) (*screenshots.FrameResult, error) {
+// the caller then holds the resume lock and owns state. A non-nil outputRoot
+// is the retained --output-dir the image is published into.
+func frameSnapshot(ctx context.Context, open frameInputOpener, request screenshots.FrameRequest, settings frameRenderSettings, state *screenshots.FrameResumeState, root rootfs.Root, outputRoot *rootfs.Root) (*screenshots.FrameResult, error) {
 	snapshot, err := open(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("snapshot input: %w", err)
@@ -476,7 +483,12 @@ func frameSnapshot(ctx context.Context, open frameInputOpener, request screensho
 		}
 	}
 	request.InputPath = snapshot.Path()
-	result, err := shotsFrameFn(ctx, request)
+	var result *screenshots.FrameResult
+	if outputRoot != nil {
+		result, err = shotsFrameIntoFn(ctx, request, *outputRoot)
+	} else {
+		result, err = shotsFrameFn(ctx, request)
+	}
 	if err != nil {
 		return finish(nil, err)
 	}

@@ -3,20 +3,26 @@ package shots
 import (
 	"context"
 
+	"github.com/rudrankriyam/App-Store-Connect-CLI/internal/rootfs"
 	"github.com/rudrankriyam/App-Store-Connect-CLI/internal/screenshots"
 )
 
-// SetFrameFunc replaces the frame implementation for tests.
-// It returns a restore function to reset the previous handler.
+// SetFrameFunc replaces the frame implementation for tests, for both single
+// inputs and --input-dir batches; a replacement ignores the batch output root.
+// It returns a restore function to reset the previous handlers.
 func SetFrameFunc(fn func(context.Context, screenshots.FrameRequest) (*screenshots.FrameResult, error)) func() {
-	previous := shotsFrameFn
+	previous, previousInto := shotsFrameFn, shotsFrameIntoFn
 	if fn == nil {
 		shotsFrameFn = screenshots.Frame
+		shotsFrameIntoFn = screenshots.FrameIntoOutputRoot
 	} else {
 		shotsFrameFn = fn
+		shotsFrameIntoFn = func(ctx context.Context, req screenshots.FrameRequest, _ rootfs.Root) (*screenshots.FrameResult, error) {
+			return fn(ctx, req)
+		}
 	}
 	return func() {
-		shotsFrameFn = previous
+		shotsFrameFn, shotsFrameIntoFn = previous, previousInto
 	}
 }
 

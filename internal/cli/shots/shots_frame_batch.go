@@ -57,6 +57,14 @@ func runFrameBatch(ctx context.Context, opts frameBatchOptions) error {
 		// A later run would pick up framed outputs as new inputs.
 		return shared.WithDiagnostic(shared.UsageError("--output-dir must differ from --input-dir"), shared.DiagnosticConflictingInput, "--output-dir")
 	}
+	// Anchor --output-dir once, before any render, so replacing it or a
+	// parent with a symlink mid-batch cannot redirect later outputs. A
+	// missing directory is created on the first publish.
+	outputRoot, err := rootfs.New(absOutputDir)
+	if err != nil {
+		return fmt.Errorf("screenshots frame: open --output-dir: %w", err)
+	}
+	defer outputRoot.Close()
 	inputs, err := listFramePNGs(inputRoot, absInputDir)
 	if err != nil {
 		return fmt.Errorf("screenshots frame: read --input-dir: %w", err)
@@ -115,7 +123,7 @@ func runFrameBatch(ctx context.Context, opts frameBatchOptions) error {
 
 	render := func(state *screenshots.FrameResumeState, root rootfs.Root) {
 		for _, job := range jobs {
-			receipt.Files = append(receipt.Files, frameBatchFile(ctx, inputRoot, job, opts.settings, state, root))
+			receipt.Files = append(receipt.Files, frameBatchFile(ctx, inputRoot, outputRoot, job, opts.settings, state, root))
 		}
 	}
 	if opts.resume {
@@ -170,8 +178,9 @@ func runFrameBatch(ctx context.Context, opts frameBatchOptions) error {
 // frameBatchFile renders one batch input with its own timeout and converts the
 // outcome into a receipt row. The input is snapshotted through the retained
 // --input-dir root, so replacing it after enumeration (for example with a
-// symlink) cannot redirect the render outside that directory.
-func frameBatchFile(ctx context.Context, inputRoot rootfs.Root, job frameBatchJob, settings frameRenderSettings, state *screenshots.FrameResumeState, root rootfs.Root) asc.ScreenshotFrameBatchFile {
+// symlink) cannot redirect the render outside that directory. The image is
+// published through the retained outputRoot for the same reason.
+func frameBatchFile(ctx context.Context, inputRoot, outputRoot rootfs.Root, job frameBatchJob, settings frameRenderSettings, state *screenshots.FrameResumeState, root rootfs.Root) asc.ScreenshotFrameBatchFile {
 	file := asc.ScreenshotFrameBatchFile{Input: job.input, Path: job.output}
 	if err := ctx.Err(); err != nil {
 		file.Status = asc.ScreenshotFrameBatchStatusFailed
@@ -191,7 +200,7 @@ func frameBatchFile(ctx context.Context, inputRoot rootfs.Root, job frameBatchJo
 	openInput := func(ctx context.Context) (*screenshots.FrameInputSnapshot, error) {
 		return screenshots.OpenFrameInputSnapshotInRoot(ctx, inputRoot, filepath.Base(job.input))
 	}
-	result, err := frameSnapshot(fileCtx, openInput, request, settings, state, root)
+	result, err := frameSnapshot(fileCtx, openInput, request, settings, state, root, &outputRoot)
 	if err != nil {
 		file.Status = asc.ScreenshotFrameBatchStatusFailed
 		file.Error = err.Error()

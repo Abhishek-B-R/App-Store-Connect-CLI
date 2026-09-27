@@ -13,6 +13,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/rudrankriyam/App-Store-Connect-CLI/internal/rootfs"
 	"gopkg.in/yaml.v3"
 )
 
@@ -170,7 +171,24 @@ func TestDisplayTypeForDimensions_Mac(t *testing.T) {
 	}
 }
 
-func TestCopyFileRejectsSymlinkDestinationWithoutMutatingTarget(t *testing.T) {
+// publishGeneratedScreenshotForTest publishes source to destination through a
+// root anchored at destination's directory, as Frame does.
+func publishGeneratedScreenshotForTest(t *testing.T, source, destination string, limit int64) (string, error) {
+	t.Helper()
+	sourceFile, err := os.Open(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sourceFile.Close()
+	outputRoot, err := rootfs.New(filepath.Dir(destination))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer outputRoot.Close()
+	return publishGeneratedScreenshot(t.Context(), sourceFile, outputRoot, filepath.Base(destination), limit)
+}
+
+func TestPublishGeneratedScreenshotRejectsSymlinkDestinationWithoutMutatingTarget(t *testing.T) {
 	dir := t.TempDir()
 	source := filepath.Join(dir, "generated.png")
 	if err := os.WriteFile(source, []byte("generated"), 0o600); err != nil {
@@ -185,8 +203,8 @@ func TestCopyFileRejectsSymlinkDestinationWithoutMutatingTarget(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := copyFileWithLimit(t.Context(), source, destination, maxMatrixArtifactBytes); err == nil {
-		t.Fatal("copyFile() error = nil, want symlink destination rejection")
+	if _, err := publishGeneratedScreenshotForTest(t, source, destination, maxMatrixArtifactBytes); err == nil {
+		t.Fatal("publishGeneratedScreenshot() error = nil, want symlink destination rejection")
 	}
 	contents, err := os.ReadFile(target)
 	if err != nil {
@@ -204,7 +222,7 @@ func TestCopyFileRejectsSymlinkDestinationWithoutMutatingTarget(t *testing.T) {
 	}
 }
 
-func TestCopyFileAtomicallyPublishesRegularDestination(t *testing.T) {
+func TestPublishGeneratedScreenshotAtomicallyReplacesRegularDestination(t *testing.T) {
 	dir := t.TempDir()
 	source := filepath.Join(dir, "generated.png")
 	destination := filepath.Join(dir, "framed.png")
@@ -215,8 +233,9 @@ func TestCopyFileAtomicallyPublishesRegularDestination(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := copyFileWithLimit(t.Context(), source, destination, maxMatrixArtifactBytes); err != nil {
-		t.Fatalf("copyFile() error = %v", err)
+	digest, err := publishGeneratedScreenshotForTest(t, source, destination, maxMatrixArtifactBytes)
+	if err != nil {
+		t.Fatalf("publishGeneratedScreenshot() error = %v", err)
 	}
 	contents, err := os.ReadFile(destination)
 	if err != nil {
@@ -224,6 +243,9 @@ func TestCopyFileAtomicallyPublishesRegularDestination(t *testing.T) {
 	}
 	if string(contents) != "generated" {
 		t.Fatalf("destination contents = %q, want generated", contents)
+	}
+	if want, err := HashFile(t.Context(), destination); err != nil || digest != want {
+		t.Fatalf("publishGeneratedScreenshot() digest = %q, want %q (err %v)", digest, want, err)
 	}
 	info, err := os.Stat(destination)
 	if err != nil {
@@ -235,7 +257,7 @@ func TestCopyFileAtomicallyPublishesRegularDestination(t *testing.T) {
 	}
 }
 
-func TestCopyFileRejectsOversizedSourceWithoutReplacingDestination(t *testing.T) {
+func TestPublishGeneratedScreenshotRejectsOversizedSourceWithoutReplacingDestination(t *testing.T) {
 	dir := t.TempDir()
 	source := filepath.Join(dir, "generated.png")
 	destination := filepath.Join(dir, "framed.png")
@@ -246,8 +268,8 @@ func TestCopyFileRejectsOversizedSourceWithoutReplacingDestination(t *testing.T)
 		t.Fatal(err)
 	}
 
-	if _, err := copyFileWithLimit(t.Context(), source, destination, 4); err == nil {
-		t.Fatal("copyFileWithLimit() error = nil, want size-limit rejection")
+	if _, err := publishGeneratedScreenshotForTest(t, source, destination, 4); err == nil {
+		t.Fatal("publishGeneratedScreenshot() error = nil, want size-limit rejection")
 	}
 	contents, err := os.ReadFile(destination)
 	if err != nil {
