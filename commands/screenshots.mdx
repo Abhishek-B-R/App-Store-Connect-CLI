@@ -47,7 +47,7 @@ asc screenshots frame --input-dir ./screenshots/raw --output-dir ./screenshots/f
 
 **Supported Devices and Frame Colors:**
 
-Frames come from the pinned Koubou 0.18.1 frame catalog. The first color is the default. Run `asc screenshots list-frame-devices --output json` for the same matrix.
+Frames come from the pinned Koubou 0.20.0 frame catalog. The first color is the default. Run `asc screenshots list-frame-devices --output json` for the same matrix.
 
 | Device | Frame | Output size | Display type | `--frame-color` values |
 | --- | --- | --- | --- | --- |
@@ -93,8 +93,18 @@ With `--input-dir`, a failed input does not stop the batch. The receipt lists ev
 
 **Requirements:**
 
-* Koubou CLI tool (version 0.18.1 exactly)
-* Install via: `pip install koubou==0.18.1` or download the matching version from [releases](https://github.com/rudrankriyam/koubou/releases)
+* Koubou CLI tool (version 0.20.0 exactly)
+* Install via: `pip install koubou==0.20.0` or `brew install bitomule/tap/koubou`, or download the matching version from [releases](https://github.com/bitomule/koubou/releases)
+* Run `kou setup-frames` once with network access to download the device frames
+
+**Upgrading from Koubou 0.18.x:**
+
+`asc screenshots frame` now requires Koubou 0.20.0 and reports any other version as unsupported. Upgrade with `pip install -U koubou==0.20.0` or `brew upgrade bitomule/tap/koubou`, then run `kou setup-frames` again so the 0.20.0 frames are downloaded.
+
+Frames that asc generates look the same after the upgrade: the frame artwork is unchanged, and asc anchors every generated text and image item on its center. Custom `--config` YAML files may need two edits:
+
+* Koubou 0.19.4 removed the `"` character from 18 frame names. Update references such as `iPad Air 13" - M2 - Space Gray - Portrait` to `iPad Air 13 - M2 - Space Gray - Portrait`.
+* Koubou 0.19.0 made content `alignment` the true horizontal anchor for text and image items. Items with `alignment: left` or `alignment: right` now start or end at their `position` x value, so adjust those x values.
 
 ### Review Workflow
 

@@ -108,9 +108,9 @@ func frameColors(template string, labels ...string) []frameColorVariant {
 }
 
 // Keeps the existing asc device slugs while delegating rendering to pinned
-// Koubou v0.18.1 frame names. Every frame name and color variant below is
-// checked against testdata/koubou-0.18.1-frames.txt, the frame catalog that
-// Koubou v0.18.1 publishes as frames-v0.18.1.tar.gz.
+// Koubou v0.20.0 frame names. Every frame name and color variant below is
+// checked against testdata/koubou-0.20.0-frames.txt, the frame catalog that
+// Koubou v0.20.0 publishes as frames-v0.20.0.tar.gz.
 var frameDeviceKoubouSpecs = map[FrameDevice]frameDeviceKoubouSpec{
 	FrameDeviceIPhoneAir: {
 		FrameName:   "iPhone Air - Light Gold - Portrait",
@@ -190,22 +190,22 @@ var frameDeviceKoubouSpecs = map[FrameDevice]frameDeviceKoubouSpec{
 		Colors:      frameColors("iPad Pro 11 - M4 - %s - Portrait", "Silver", "Space Gray"),
 	},
 	FrameDeviceIPadAir13: {
-		FrameName:   `iPad Air 13" - M2 - Space Gray - Portrait`,
+		FrameName:   "iPad Air 13 - M2 - Space Gray - Portrait",
 		OutputSize:  "iPadPro13",
 		DisplayType: "APP_IPAD_PRO_3GEN_129",
 		Family:      frameFamilyIPad,
 		FrameWidth:  2300,
 		FrameHeight: 2980,
-		Colors:      frameColors(`iPad Air 13" - M2 - %s - Portrait`, "Space Gray", "Blue", "Purple", "Stardust"),
+		Colors:      frameColors("iPad Air 13 - M2 - %s - Portrait", "Space Gray", "Blue", "Purple", "Stardust"),
 	},
 	FrameDeviceIPadAir11: {
-		FrameName:   `iPad Air 11" - M2 - Space Gray - Portrait`,
+		FrameName:   "iPad Air 11 - M2 - Space Gray - Portrait",
 		OutputSize:  "iPadPro11",
 		DisplayType: "APP_IPAD_PRO_3GEN_11",
 		Family:      frameFamilyIPad,
 		FrameWidth:  1900,
 		FrameHeight: 2620,
-		Colors:      frameColors(`iPad Air 11" - M2 - %s - Portrait`, "Space Gray", "Blue", "Purple", "Stardust"),
+		Colors:      frameColors("iPad Air 11 - M2 - %s - Portrait", "Space Gray", "Blue", "Purple", "Stardust"),
 	},
 	FrameDeviceIPadMini: {
 		// Koubou has no named iPad mini size; 1488x2266 is the iPad mini

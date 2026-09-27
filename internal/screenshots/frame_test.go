@@ -563,7 +563,7 @@ func installFrameTestMockKou(t *testing.T, fixturePath, outputPath string) {
 	kouPath := filepath.Join(binDir, "kou")
 	script := `#!/bin/sh
 if [ "$1" = "--version" ]; then
-  echo "kou 0.18.1"
+  echo "kou 0.20.0"
   exit 0
 fi
 if [ "$1" = "setup-frames" ]; then
@@ -799,7 +799,7 @@ func TestRunKoubouGenerate_ParsesJSONFromStdoutWhenStderrHasWarnings(t *testing.
 	writeExecutable(t, filepath.Join(binDir, "kou"), `#!/bin/sh
 set -eu
 if [ "$1" = "--version" ]; then
-  echo "kou 0.18.1"
+  echo "kou 0.20.0"
   exit 0
 fi
 if [ "$1" = "setup-frames" ]; then
@@ -834,7 +834,7 @@ func TestRunKoubouGenerate_RunsSetupFramesBeforeGenerate(t *testing.T) {
 	writeExecutable(t, filepath.Join(binDir, "kou"), `#!/bin/sh
 set -eu
 if [ "$1" = "--version" ]; then
-  echo "kou 0.18.1"
+  echo "kou 0.20.0"
   exit 0
 fi
 if [ "$1" = "setup-frames" ]; then
@@ -876,7 +876,7 @@ func TestRunKoubouGenerate_SetupFramesFailureIncludesHint(t *testing.T) {
 	writeExecutable(t, filepath.Join(binDir, "kou"), `#!/bin/sh
 set -eu
 if [ "$1" = "--version" ]; then
-  echo "kou 0.18.1"
+  echo "kou 0.20.0"
   exit 0
 fi
 if [ "$1" = "setup-frames" ]; then
@@ -913,7 +913,7 @@ func TestRunKoubouGenerate_RechecksSetupFramesWhenKouBinaryChanges(t *testing.T)
 	writeExecutable(t, filepath.Join(firstBinDir, "kou"), `#!/bin/sh
 set -eu
 if [ "$1" = "--version" ]; then
-  echo "kou 0.18.1"
+  echo "kou 0.20.0"
   exit 0
 fi
 if [ "$1" = "setup-frames" ]; then
@@ -933,7 +933,7 @@ exit 1
 	writeExecutable(t, filepath.Join(secondBinDir, "kou"), `#!/bin/sh
 set -eu
 if [ "$1" = "--version" ]; then
-  echo "kou 0.18.1"
+  echo "kou 0.20.0"
   exit 0
 fi
 if [ "$1" = "setup-frames" ]; then
@@ -984,7 +984,7 @@ func TestRunKoubouGenerate_SkipsSetupFramesForCanvasOnlyConfig(t *testing.T) {
 	writeExecutable(t, filepath.Join(binDir, "kou"), `#!/bin/sh
 set -eu
 if [ "$1" = "--version" ]; then
-  echo "kou 0.18.1"
+  echo "kou 0.20.0"
   exit 0
 fi
 if [ "$1" = "setup-frames" ]; then
@@ -1050,8 +1050,39 @@ exit 1
 	if !strings.Contains(err.Error(), "unsupported Koubou version 0.12.0") {
 		t.Fatalf("expected unsupported version error, got %v", err)
 	}
-	if !strings.Contains(err.Error(), "0.18.1") {
+	if !strings.Contains(err.Error(), "0.20.0") {
 		t.Fatalf("expected pinned version in error, got %v", err)
+	}
+}
+
+func TestRunKoubouGenerate_OlderVersionIncludesUpgradeHint(t *testing.T) {
+	skipWindowsUnixExecutableFixtures(t)
+	resetKoubouVersionCacheForTest()
+	t.Cleanup(resetKoubouVersionCacheForTest)
+	binDir := t.TempDir()
+	writeExecutable(t, filepath.Join(binDir, "kou"), `#!/bin/sh
+if [ "$1" = "--version" ]; then
+  echo "kou 0.18.1"
+  exit 0
+fi
+echo "unsupported args" >&2
+exit 1
+`)
+	t.Setenv("PATH", binDir)
+
+	_, err := runKoubouGenerate(context.Background(), "frame.yaml")
+	if err == nil {
+		t.Fatal("expected version pinning error")
+	}
+	for _, want := range []string{
+		"unsupported Koubou version 0.18.1",
+		"pinned to 0.20.0",
+		"pip install -U koubou==0.20.0",
+		"brew upgrade bitomule/tap/koubou",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error %q does not contain %q", err, want)
+		}
 	}
 }
 
@@ -1062,7 +1093,7 @@ func TestRunKoubouGenerate_NotFoundIncludesPinnedInstallHint(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected not found error")
 	}
-	if !strings.Contains(err.Error(), "pip install koubou==0.18.1") {
+	if !strings.Contains(err.Error(), "pip install koubou==0.20.0") {
 		t.Fatalf("expected pinned install command in error, got %v", err)
 	}
 }

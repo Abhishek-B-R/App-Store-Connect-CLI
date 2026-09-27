@@ -1315,7 +1315,7 @@ func TestShotsFrameResumeRerenderRejectsSymlinkOutput(t *testing.T) {
 			if err := os.WriteFile(kouPath, []byte(`#!/bin/sh
 set -eu
 if [ "$1" = "--version" ]; then
-  echo "kou 0.18.1"
+  echo "kou 0.20.0"
   exit 0
 fi
 if [ "$1" = "setup-frames" ]; then

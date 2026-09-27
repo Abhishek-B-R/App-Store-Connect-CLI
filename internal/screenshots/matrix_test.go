@@ -4837,7 +4837,7 @@ func TestFrameIntoRootUsesPinnedKoubouScratch(t *testing.T) {
 	writeExecutable(t, filepath.Join(binDir, "kou"), `#!/bin/sh
 set -eu
 if [ "$1" = "--version" ]; then
-  echo "kou 0.18.1"
+  echo "kou 0.20.0"
   exit 0
 fi
 if [ "$1" != "generate" ]; then
@@ -4908,7 +4908,7 @@ func TestFrameIntoRootRejectsKoubouScratchReplacementBeforeWrite(t *testing.T) {
 	writeExecutable(t, filepath.Join(binDir, "kou"), `#!/bin/sh
 set -eu
 if [ "$1" = "--version" ]; then
-  echo "kou 0.18.1"
+  echo "kou 0.20.0"
   exit 0
 fi
 if [ "$1" != "generate" ]; then
@@ -4997,7 +4997,7 @@ func TestFrameIntoRootRejectsKoubouNestedOutputReplacementBeforeWrite(t *testing
 	writeExecutable(t, filepath.Join(binDir, "kou"), `#!/bin/sh
 set -eu
 if [ "$1" = "--version" ]; then
-  echo "kou 0.18.1"
+  echo "kou 0.20.0"
   exit 0
 fi
 if [ "$1" != "generate" ]; then

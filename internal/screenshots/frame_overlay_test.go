@@ -243,3 +243,61 @@ func TestOverlayFixtureConvertsToRendererConfigGolden(t *testing.T) {
 		t.Fatalf("renderer config mismatch\n--- got ---\n%s\n--- want ---\n%s", got, wantText)
 	}
 }
+
+// TestGeneratedContentItemsAnchorOnCenter pins the horizontal anchor of every
+// generated text and image item. Since Koubou 0.19.0 content alignment is the
+// true horizontal anchor, so a 50% x position only centers an item when its
+// alignment is center.
+func TestGeneratedContentItemsAnchorOnCenter(t *testing.T) {
+	tests := []struct {
+		name   string
+		device FrameDevice
+		canvas *CanvasOptions
+		items  int
+	}{
+		{name: "bezel without text", device: FrameDeviceIPhoneAir, items: 1},
+		{name: "bezel text top", device: FrameDeviceIPadAir13, canvas: &CanvasOptions{Title: "Plan", Subtitle: "Trips"}, items: 3},
+		{name: "bezel text bottom", device: FrameDeviceWatchUltra3, canvas: &CanvasOptions{Title: "Plan", Subtitle: "Trips", TextPosition: TextPositionBottom}, items: 3},
+		{name: "landscape bezel", device: FrameDeviceAppleTV, canvas: &CanvasOptions{Title: "Plan"}, items: 2},
+		{name: "canvas without text", device: FrameDeviceMac, items: 1},
+		{name: "canvas text", device: FrameDeviceMac, canvas: &CanvasOptions{Title: "Plan", Subtitle: "Trips", TextPosition: TextPositionBottom}, items: 3},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			workDir := t.TempDir()
+			input := filepath.Join(workDir, "home.png")
+			if err := os.WriteFile(input, []byte("png"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			configPath, _, err := createDefaultKoubouConfigAt(input, frameDeviceKoubouSpecs[test.device], test.canvas, workDir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			data, err := os.ReadFile(configPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var parsed struct {
+				Screenshots map[string]struct {
+					Content []struct {
+						Type      string    `yaml:"type"`
+						Position  [2]string `yaml:"position"`
+						Alignment string    `yaml:"alignment"`
+					} `yaml:"content"`
+				} `yaml:"screenshots"`
+			}
+			if err := yaml.Unmarshal(data, &parsed); err != nil {
+				t.Fatal(err)
+			}
+			content := parsed.Screenshots["framed"].Content
+			if len(content) != test.items {
+				t.Fatalf("content items = %d, want %d:\n%s", len(content), test.items, data)
+			}
+			for index, item := range content {
+				if item.Alignment != "center" || item.Position[0] != "50%" {
+					t.Fatalf("item %d (%s) alignment %q x %q, want center at 50%%:\n%s", index, item.Type, item.Alignment, item.Position[0], data)
+				}
+			}
+		})
+	}
+}

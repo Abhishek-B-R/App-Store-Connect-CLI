@@ -127,8 +127,8 @@ func TestFrameDeviceSpecsForExpandedFamilies(t *testing.T) {
 	}{
 		{FrameDeviceIPadPro13, "iPad Pro 13 - M4 - Silver - Portrait", "ipad", "APP_IPAD_PRO_3GEN_129", 2064, 2752},
 		{FrameDeviceIPadPro11, "iPad Pro 11 - M4 - Silver - Portrait", "ipad", "APP_IPAD_PRO_3GEN_11", 1668, 2388},
-		{FrameDeviceIPadAir13, `iPad Air 13" - M2 - Space Gray - Portrait`, "ipad", "APP_IPAD_PRO_3GEN_129", 2064, 2752},
-		{FrameDeviceIPadAir11, `iPad Air 11" - M2 - Space Gray - Portrait`, "ipad", "APP_IPAD_PRO_3GEN_11", 1668, 2388},
+		{FrameDeviceIPadAir13, "iPad Air 13 - M2 - Space Gray - Portrait", "ipad", "APP_IPAD_PRO_3GEN_129", 2064, 2752},
+		{FrameDeviceIPadAir11, "iPad Air 11 - M2 - Space Gray - Portrait", "ipad", "APP_IPAD_PRO_3GEN_11", 1668, 2388},
 		{FrameDeviceIPadMini, "iPad mini - Starlight - Portrait", "ipad", "APP_IPAD_PRO_3GEN_11", 1488, 2266},
 		{FrameDeviceWatchSeries11, "Apple Watch S11 - 46mm - Aluminum Jet Black + Sport Band Black", "watch", "APP_WATCH_SERIES_10", 416, 496},
 		{FrameDeviceWatchUltra3, "AW Ultra 3 - Black + Ocean Band Black", "watch", "APP_WATCH_ULTRA", 422, 514},

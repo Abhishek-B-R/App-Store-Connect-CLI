@@ -39,3 +39,4 @@ screenshots:
                 - 39%
               scale: 0.6788
               frame: true
+              alignment: center

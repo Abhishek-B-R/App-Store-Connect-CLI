@@ -1,6 +1,6 @@
-# Device frame PNG stems shipped by Koubou v0.18.1.
-# Source: github.com/bitomule/Koubou tag v0.18.1, src/koubou/frames/*.png.
-# The release workflow packages that directory as frames-v0.18.1.tar.gz,
+# Device frame PNG stems shipped by Koubou v0.20.0.
+# Source: github.com/bitomule/Koubou tag v0.20.0, src/koubou/frames/*.png.
+# The release workflow packages that directory as frames-v0.20.0.tar.gz,
 # which `kou setup-frames` downloads. Regenerate when the Koubou pin changes.
 AW Ultra 2 - Black + Alpine Loop Dark Green
 AW Ultra 2 - Black + Alpine Loop Navy
@@ -79,7 +79,7 @@ Apple Watch S11 - 46mm - Titanium Natural + Sport Band Stone Gray
 Apple Watch S11 - 46mm - Titanium Slate + Magnetic Link Navy
 Apple Watch S11 - 46mm - Titanium Slate + Milanese Loop
 Apple Watch S11 - 46mm - Titanium Slate + Sport Band Black
-MacBook Air 13" - 4th Gen - Midnight
+MacBook Air 13 - 4th Gen - Midnight
 MacBook Air 2020
 MacBook Air 2022
 MacBook Pro 2021 14
@@ -92,27 +92,27 @@ Watch Series 7 45 Midnight
 Watch Series 7 45 Starlight
 Watch Ultra 2022
 iMac 2021
-iMac 24" - Silver
+iMac 24 - Silver
 iPad - Silver - Landscape
 iPad - Silver - Portrait
 iPad 2021 Landscape
 iPad 2021 Portrait
-iPad Air 11" - M2 - Blue - Landscape
-iPad Air 11" - M2 - Blue - Portrait
-iPad Air 11" - M2 - Purple - Landscape
-iPad Air 11" - M2 - Purple - Portrait
-iPad Air 11" - M2 - Space Gray - Landscape
-iPad Air 11" - M2 - Space Gray - Portrait
-iPad Air 11" - M2 - Stardust - Landscape
-iPad Air 11" - M2 - Stardust - Portrait
-iPad Air 13" - M2 - Blue - Landscape
-iPad Air 13" - M2 - Blue - Portrait
-iPad Air 13" - M2 - Purple - Landscape
-iPad Air 13" - M2 - Purple - Portrait
-iPad Air 13" - M2 - Space Gray - Landscape
-iPad Air 13" - M2 - Space Gray - Portrait
-iPad Air 13" - M2 - Stardust - Landscape
-iPad Air 13" - M2 - Stardust - Portrait
+iPad Air 11 - M2 - Blue - Landscape
+iPad Air 11 - M2 - Blue - Portrait
+iPad Air 11 - M2 - Purple - Landscape
+iPad Air 11 - M2 - Purple - Portrait
+iPad Air 11 - M2 - Space Gray - Landscape
+iPad Air 11 - M2 - Space Gray - Portrait
+iPad Air 11 - M2 - Stardust - Landscape
+iPad Air 11 - M2 - Stardust - Portrait
+iPad Air 13 - M2 - Blue - Landscape
+iPad Air 13 - M2 - Blue - Portrait
+iPad Air 13 - M2 - Purple - Landscape
+iPad Air 13 - M2 - Purple - Portrait
+iPad Air 13 - M2 - Space Gray - Landscape
+iPad Air 13 - M2 - Space Gray - Portrait
+iPad Air 13 - M2 - Stardust - Landscape
+iPad Air 13 - M2 - Stardust - Portrait
 iPad Air 2020 Landscape
 iPad Air 2020 Portrait
 iPad Pro 11 - M4 - Silver - Landscape

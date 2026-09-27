@@ -31,6 +31,12 @@ func ParseTextPosition(raw string) (TextPosition, error) {
 	}
 }
 
+// koubouCenterAlignment anchors every generated text and image item on its
+// horizontal center. Since Koubou 0.19.0, content alignment sets the true
+// horizontal anchor for both text and images, so emitting it explicitly keeps
+// the 50% x positions below centered regardless of Koubou's defaults.
+const koubouCenterAlignment = "center"
+
 // Canvas (mac) layout with text below the window.
 const (
 	canvasBottomTitleY        = "84%"
@@ -103,7 +109,7 @@ func textContentItems(opts *CanvasOptions, layout textLayout) []koubouDefaultCon
 			Weight:     "bold",
 			Color:      color,
 			FontFamily: opts.Font,
-			Alignment:  "center",
+			Alignment:  koubouCenterAlignment,
 			MaxWidth:   layout.maxWidth,
 		})
 	}
@@ -123,7 +129,7 @@ func textContentItems(opts *CanvasOptions, layout textLayout) []koubouDefaultCon
 			Size:       layout.subtitleSize,
 			Color:      color,
 			FontFamily: opts.Font,
-			Alignment:  "center",
+			Alignment:  koubouCenterAlignment,
 			MaxWidth:   layout.maxWidth,
 		})
 	}
@@ -135,11 +141,12 @@ func textContentItems(opts *CanvasOptions, layout textLayout) []koubouDefaultCon
 // scaled from its native pinned size into the space beside the text band.
 func bezelContentItems(absInputPath string, spec frameDeviceKoubouSpec, opts *CanvasOptions) []koubouDefaultContentItem {
 	image := koubouDefaultContentItem{
-		Type:     "image",
-		Asset:    absInputPath,
-		Position: [2]string{"50%", "50%"},
-		Scale:    1,
-		Frame:    boolPtr(true),
+		Type:      "image",
+		Asset:     absInputPath,
+		Position:  [2]string{"50%", "50%"},
+		Scale:     1,
+		Frame:     boolPtr(true),
+		Alignment: koubouCenterAlignment,
 	}
 	canvasWidth, canvasHeight, ok := spec.outputDimensions()
 	if opts == nil || !opts.hasText() || !ok || spec.FrameWidth <= 0 || spec.FrameHeight <= 0 {

@@ -23,7 +23,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-const pinnedKoubouVersion = "0.18.1"
+const pinnedKoubouVersion = "0.20.0"
 
 const (
 	canvasTitleFontSize    = 60
@@ -857,11 +857,12 @@ func createDefaultKoubouConfigAtRoot(
 		}
 		contentItems = append(contentItems, textContentItems(opts, canvasTextLayout(opts.TextPosition))...)
 		contentItems = append(contentItems, koubouDefaultContentItem{
-			Type:     "image",
-			Asset:    absInputPath,
-			Position: [2]string{"50%", windowY},
-			Scale:    scale,
-			Frame:    boolPtr(false),
+			Type:      "image",
+			Asset:     absInputPath,
+			Position:  [2]string{"50%", windowY},
+			Scale:     scale,
+			Frame:     boolPtr(false),
+			Alignment: koubouCenterAlignment,
 		})
 	} else {
 		contentItems = bezelContentItems(absInputPath, spec, opts)
@@ -1193,6 +1194,15 @@ func ensurePinnedKoubouVersion(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("kou --version output does not include a semantic version: %q", strings.TrimSpace(string(output)))
 	}
 	if detectedVersion != pinnedKoubouVersion {
+		if semver.Compare("v"+detectedVersion, "v"+pinnedKoubouVersion) < 0 {
+			return "", fmt.Errorf(
+				"unsupported Koubou version %s; this ASC release is pinned to %s. Upgrade with: %s (Homebrew: %s)",
+				detectedVersion,
+				pinnedKoubouVersion,
+				pinnedKoubouUpgradeCommand(),
+				pinnedKoubouBrewUpgradeCommand,
+			)
+		}
 		return "", fmt.Errorf(
 			"unsupported Koubou version %s; this ASC release is pinned to %s. Install with: %s",
 			detectedVersion,
@@ -1263,6 +1273,13 @@ func parseKoubouVersion(output []byte) (string, bool) {
 
 func pinnedKoubouInstallCommand() string {
 	return fmt.Sprintf("pip install koubou==%s", pinnedKoubouVersion)
+}
+
+// pinnedKoubouBrewUpgradeCommand upgrades a Homebrew install from Koubou's tap.
+const pinnedKoubouBrewUpgradeCommand = "brew upgrade bitomule/tap/koubou"
+
+func pinnedKoubouUpgradeCommand() string {
+	return fmt.Sprintf("pip install -U koubou==%s", pinnedKoubouVersion)
 }
 
 func pinnedKoubouSetupFramesCommand() string {
