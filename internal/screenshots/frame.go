@@ -23,19 +23,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// FrameDevice identifies a supported frame profile.
-type FrameDevice string
-
-const (
-	FrameDeviceIPhoneAir   FrameDevice = "iphone-air"
-	FrameDeviceIPhone17Pro FrameDevice = "iphone-17-pro"
-	FrameDeviceIPhone17PM  FrameDevice = "iphone-17-pro-max"
-	FrameDeviceIPhone16e   FrameDevice = "iphone-16e"
-	FrameDeviceIPhone17    FrameDevice = "iphone-17"
-	FrameDeviceMac         FrameDevice = "mac"
-
-	pinnedKoubouVersion = "0.18.1"
-)
+const pinnedKoubouVersion = "0.20.0"
 
 const (
 	canvasTitleFontSize    = 60
@@ -66,141 +54,29 @@ var (
 	cachedKoubouFramesReady   bool
 )
 
-var supportedFrameDevices = []FrameDevice{
-	FrameDeviceIPhoneAir,
-	FrameDeviceIPhone17Pro,
-	FrameDeviceIPhone17PM,
-	FrameDeviceIPhone16e,
-	FrameDeviceIPhone17,
-	FrameDeviceMac,
-}
-
-type frameDeviceKoubouSpec struct {
-	FrameName   string
-	Aliases     []string
-	OutputSize  string // Koubou named size (e.g. "iPhone6_9" or "AppDesktop_2880")
-	DisplayType string
-	Canvas      bool // true = plain canvas, no device bezel; screenshot scaled to fill
-}
-
-// Keeps the existing asc device slugs while delegating rendering to pinned
-// Koubou v0.18.1 frame names.
-var frameDeviceKoubouSpecs = map[FrameDevice]frameDeviceKoubouSpec{
-	FrameDeviceIPhoneAir: {
-		FrameName:   "iPhone Air - Light Gold - Portrait",
-		Aliases:     []string{"iPhone 16 Pro - White Titanium - Portrait"},
-		OutputSize:  "iPhone6_9_alt",
-		DisplayType: "APP_IPHONE_69",
-	},
-	FrameDeviceIPhone17PM: {
-		FrameName:   "iPhone 17 Pro Max - Silver - Portrait",
-		Aliases:     []string{"iPhone 16 Pro Max - White Titanium - Portrait"},
-		OutputSize:  "iPhone6_9",
-		DisplayType: "APP_IPHONE_69",
-	},
-	FrameDeviceIPhone17Pro: {
-		FrameName:   "iPhone 17 Pro - Silver - Portrait",
-		Aliases:     []string{"iPhone 15 Pro - White Titanium - Portrait"},
-		OutputSize:  "iPhone6_3",
-		DisplayType: "APP_IPHONE_61",
-	},
-	FrameDeviceIPhone17: {
-		FrameName:   "iPhone 17 - White - Portrait",
-		Aliases:     []string{"iPhone 17 - Teal - Portrait", "iPhone 14 Pro Portrait"},
-		OutputSize:  "iPhone6_3",
-		DisplayType: "APP_IPHONE_61",
-	},
-	FrameDeviceIPhone16e: {
-		FrameName:   "iPhone 16 - White - Portrait",
-		Aliases:     []string{"iPhone 16e - White - Portrait"},
-		OutputSize:  "iPhone6_1",
-		DisplayType: "APP_IPHONE_61",
-	},
-	FrameDeviceMac: {
-		FrameName:   "Mac",
-		OutputSize:  "AppDesktop_2880",
-		DisplayType: "APP_DESKTOP",
-		Canvas:      true,
-	},
-}
-
-// CanvasOptions controls title/subtitle/color overlays for canvas-mode devices
-// (e.g. --device mac). All fields are optional; zero values use defaults.
+// CanvasOptions controls title/subtitle/color overlays and backgrounds. They
+// apply to every device: canvas devices (e.g. --device mac) and bezel frames.
+// All fields are optional; zero values use defaults.
 type CanvasOptions struct {
 	Title         string
 	Subtitle      string
-	BGColor       string // solid background hex color (e.g. "#ffffff"); defaults to dark gradient
-	TitleColor    string // title text color; defaults to canvasDefaultTitleColor
-	SubtitleColor string // subtitle text color; defaults to canvasDefaultSubtitleColor
+	BGColor       string       // solid background hex color (e.g. "#ffffff"); text overlays default to a dark gradient
+	TitleColor    string       // title text color; defaults to canvasDefaultTitleColor
+	SubtitleColor string       // subtitle text color; defaults to canvasDefaultSubtitleColor
+	Font          string       // font family for title and subtitle; empty uses Koubou's default (Arial)
+	TextPosition  TextPosition // top (default) or bottom
 }
 
 func (o CanvasOptions) hasText() bool { return o.Title != "" || o.Subtitle != "" }
-
-func validateFrameCanvas(spec frameDeviceKoubouSpec, canvas *CanvasOptions) error {
-	if canvas == nil || spec.Canvas {
-		return nil
-	}
-	if strings.TrimSpace(canvas.BGColor) != "" {
-		return fmt.Errorf("background overlays require a canvas device")
-	}
-	return nil
-}
-
-func bezelContentItems(absInputPath string, scale float64, opts *CanvasOptions) []koubouDefaultContentItem {
-	if opts == nil {
-		opts = &CanvasOptions{}
-	}
-	items := make([]koubouDefaultContentItem, 0, 3)
-	if opts.Title != "" {
-		color := opts.TitleColor
-		if color == "" {
-			color = canvasDefaultTitleColor
-		}
-		items = append(items, koubouDefaultContentItem{
-			Type:      "text",
-			Content:   opts.Title,
-			Position:  [2]string{"50%", canvasTitleY},
-			Size:      canvasTitleFontSize,
-			Weight:    "bold",
-			Color:     color,
-			Alignment: "center",
-		})
-	}
-	if opts.Subtitle != "" {
-		color := opts.SubtitleColor
-		if color == "" {
-			color = canvasDefaultSubtitleColor
-		}
-		subtitleY := canvasSubtitleY
-		if opts.Title == "" {
-			subtitleY = canvasSubtitleSoloY
-		}
-		items = append(items, koubouDefaultContentItem{
-			Type:      "text",
-			Content:   opts.Subtitle,
-			Position:  [2]string{"50%", subtitleY},
-			Size:      canvasSubtitleFontSize,
-			Color:     color,
-			Alignment: "center",
-		})
-	}
-	items = append(items, koubouDefaultContentItem{
-		Type:     "image",
-		Asset:    absInputPath,
-		Position: [2]string{"50%", "50%"},
-		Scale:    scale,
-		Frame:    boolPtr(true),
-	})
-	return items
-}
 
 // FrameRequest holds options for composing one screenshot.
 type FrameRequest struct {
 	InputPath  string         // required when ConfigPath is empty
 	OutputPath string         // optional for custom config mode; required for input mode
 	Device     string         // device slug; defaults to iphone-air when empty
+	FrameColor string         // frame color variant; empty selects the device default
 	ConfigPath string         // optional Koubou YAML config path
-	Canvas     *CanvasOptions // nil for bezel devices; non-nil for canvas devices (e.g. mac)
+	Canvas     *CanvasOptions // optional text overlays and background
 
 	// Kept for backwards compatibility; ignored in Koubou mode.
 	FrameRoot   string
@@ -293,6 +169,17 @@ func OpenFrameInputSnapshot(ctx context.Context, inputPath string) (*FrameInputS
 	return &FrameInputSnapshot{input: input}, nil
 }
 
+// OpenFrameInputSnapshotInRoot validates and copies the regular file name,
+// opened beneath the caller-owned root without following symlinks, into a
+// private, protected staging file. The caller keeps ownership of root.
+func OpenFrameInputSnapshotInRoot(ctx context.Context, root rootfs.Root, name string) (*FrameInputSnapshot, error) {
+	input, err := prepareMatrixFrameInputInRoot(ctx, root, name)
+	if err != nil {
+		return nil, err
+	}
+	return &FrameInputSnapshot{input: input}, nil
+}
+
 // Path returns the protected path suitable for a renderer invocation.
 func (snapshot *FrameInputSnapshot) Path() string {
 	if snapshot == nil || snapshot.input == nil {
@@ -373,36 +260,52 @@ func prepareMatrixFrameInput(ctx context.Context, inputPath string) (*matrixPrep
 	if err != nil {
 		return nil, fmt.Errorf("open frame input directory: %w", err)
 	}
+	prepared, err := prepareMatrixFrameInputInRoot(ctx, sourceRoot, filepath.Base(absInputPath))
+	if closeErr := sourceRoot.Close(); closeErr != nil {
+		if err != nil {
+			return nil, errors.Join(err, fmt.Errorf("close frame input directory: %w", closeErr))
+		}
+		return nil, errors.Join(fmt.Errorf("close frame input directory: %w", closeErr), prepared.close())
+	}
+	return prepared, err
+}
+
+// prepareMatrixFrameInputInRoot copies the regular file name, opened beneath
+// the caller-owned sourceRoot without following symlinks, into a protected
+// staging file. The caller keeps ownership of sourceRoot.
+func prepareMatrixFrameInputInRoot(ctx context.Context, sourceRoot rootfs.Root, name string) (*matrixPreparedFrameInput, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	absInputPath := filepath.Join(sourceRoot.Path(), name)
 	sourceFile, err := func() (*os.File, error) {
 		if matrixFrameInputBeforeCopyForTest != nil {
 			matrixFrameInputBeforeCopyForTest(absInputPath)
 		}
-		return sourceRoot.OpenFile(filepath.Base(absInputPath))
+		return sourceRoot.OpenFile(name)
 	}()
 	if err != nil {
-		_ = sourceRoot.Close()
 		return nil, fmt.Errorf("open frame input: %w", err)
 	}
 	if _, err := sourceFile.Stat(); err != nil {
 		_ = sourceFile.Close()
-		_ = sourceRoot.Close()
 		return nil, fmt.Errorf("stat frame input: %w", err)
 	}
 	if _, err := readMatrixImageDimensions(sourceFile, absInputPath); err != nil {
 		_ = sourceFile.Close()
-		_ = sourceRoot.Close()
 		return nil, fmt.Errorf("read input screenshot: %w", err)
 	}
 	if _, err := sourceFile.Seek(0, io.SeekStart); err != nil {
 		_ = sourceFile.Close()
-		_ = sourceRoot.Close()
 		return nil, fmt.Errorf("rewind frame input: %w", err)
 	}
 	hasher := sha256.New()
 	size, err := io.Copy(hasher, io.LimitReader(&matrixContextReader{ctx: ctx, reader: sourceFile}, maxMatrixArtifactBytes+1))
 	if err != nil {
 		_ = sourceFile.Close()
-		_ = sourceRoot.Close()
 		if contextErr := ctx.Err(); contextErr != nil {
 			return nil, contextErr
 		}
@@ -410,21 +313,18 @@ func prepareMatrixFrameInput(ctx context.Context, inputPath string) (*matrixPrep
 	}
 	if size > maxMatrixArtifactBytes {
 		_ = sourceFile.Close()
-		_ = sourceRoot.Close()
 		return nil, errors.New("frame input exceeds the size limit")
 	}
 	var digest [sha256.Size]byte
 	copy(digest[:], hasher.Sum(nil))
 	if _, err := sourceFile.Seek(0, io.SeekStart); err != nil {
 		_ = sourceFile.Close()
-		_ = sourceRoot.Close()
 		return nil, fmt.Errorf("rewind frame input: %w", err)
 	}
 
 	scratchAttempt, err := createMatrixPrivateAttemptRoot()
 	if err != nil {
 		_ = sourceFile.Close()
-		_ = sourceRoot.Close()
 		return nil, fmt.Errorf("create frame input scratch: %w", err)
 	}
 	prepared := &matrixPreparedFrameInput{
@@ -437,7 +337,6 @@ func prepareMatrixFrameInput(ctx context.Context, inputPath string) (*matrixPrep
 	}
 	fail := func(primary error) (*matrixPreparedFrameInput, error) {
 		_ = sourceFile.Close()
-		_ = sourceRoot.Close()
 		return nil, errors.Join(primary, prepared.close())
 	}
 	protectedFile, err := createMatrixPrivateAttemptFileInRoot(scratchAttempt.pinned, "input.png", prepared.path)
@@ -460,11 +359,7 @@ func prepareMatrixFrameInput(ctx context.Context, inputPath string) (*matrixPrep
 	}
 	prepared.identity = protectedIdentity
 	if err := sourceFile.Close(); err != nil {
-		_ = sourceRoot.Close()
 		return nil, errors.Join(fmt.Errorf("close frame input: %w", err), protectedFile.Close(), prepared.close())
-	}
-	if err := sourceRoot.Close(); err != nil {
-		return nil, errors.Join(fmt.Errorf("close frame input directory: %w", err), protectedFile.Close(), prepared.close())
 	}
 	if err := prepared.verify(ctx); err != nil {
 		return nil, errors.Join(err, protectedFile.Close(), prepared.close())
@@ -515,12 +410,6 @@ type FrameResult struct {
 	Skipped      bool   `json:"skipped,omitempty"`
 	Width        int    `json:"width"`
 	Height       int    `json:"height"`
-}
-
-// FrameDeviceOption describes one supported frame device value.
-type FrameDeviceOption struct {
-	ID      string `json:"id"`
-	Default bool   `json:"default"`
 }
 
 type koubouGenerateResult struct {
@@ -579,86 +468,63 @@ type koubouDefaultScreenshotSpec struct {
 }
 
 type koubouDefaultContentItem struct {
-	Type      string    `yaml:"type"`
-	Asset     string    `yaml:"asset,omitempty"`
-	Content   string    `yaml:"content,omitempty"`
-	Position  [2]string `yaml:"position"`
-	Scale     float64   `yaml:"scale,omitempty"`
-	Frame     *bool     `yaml:"frame,omitempty"`
-	Color     string    `yaml:"color,omitempty"`
-	Size      int       `yaml:"size,omitempty"`
-	Weight    string    `yaml:"weight,omitempty"`
-	Alignment string    `yaml:"alignment,omitempty"`
+	Type       string    `yaml:"type"`
+	Asset      string    `yaml:"asset,omitempty"`
+	Content    string    `yaml:"content,omitempty"`
+	Position   [2]string `yaml:"position"`
+	Scale      float64   `yaml:"scale,omitempty"`
+	Frame      *bool     `yaml:"frame,omitempty"`
+	Color      string    `yaml:"color,omitempty"`
+	Size       int       `yaml:"size,omitempty"`
+	Weight     string    `yaml:"weight,omitempty"`
+	FontFamily string    `yaml:"font_family,omitempty"`
+	Alignment  string    `yaml:"alignment,omitempty"`
+	MaxWidth   int       `yaml:"max_width,omitempty"`
 }
 
-// DefaultFrameDevice returns the default frame device.
-func DefaultFrameDevice() FrameDevice {
-	return FrameDeviceIPhoneAir
-}
-
-// FrameDeviceValues returns allowed --device values in CLI display order.
-func FrameDeviceValues() []string {
-	values := make([]string, 0, len(supportedFrameDevices))
-	for _, device := range supportedFrameDevices {
-		values = append(values, string(device))
+// Frame composes screenshots through Koubou's YAML pipeline. The directory of
+// req.OutputPath is anchored before Koubou runs, so replacing it or a parent
+// with a symlink during the render cannot redirect the published image.
+func Frame(ctx context.Context, req FrameRequest) (result *FrameResult, returnErr error) {
+	if strings.TrimSpace(req.OutputPath) == "" {
+		return frame(ctx, req, nil, false)
 	}
-	return values
-}
-
-// FrameDeviceOptions returns supported values with default marker.
-func FrameDeviceOptions() []FrameDeviceOption {
-	options := make([]FrameDeviceOption, 0, len(supportedFrameDevices))
-	defaultDevice := DefaultFrameDevice()
-	for _, device := range supportedFrameDevices {
-		options = append(options, FrameDeviceOption{
-			ID:      string(device),
-			Default: device == defaultDevice,
-		})
+	absOutputPath, err := filepath.Abs(req.OutputPath)
+	if err != nil {
+		return nil, fmt.Errorf("resolve output path: %w", err)
 	}
-	return options
-}
-
-// IsCanvasDevice returns true if the device uses canvas mode (no device bezel).
-func IsCanvasDevice(device FrameDevice) bool {
-	spec, ok := frameDeviceKoubouSpecs[device]
-	return ok && spec.Canvas
-}
-
-// ParseFrameDevice normalizes and validates a frame device value.
-func ParseFrameDevice(raw string) (FrameDevice, error) {
-	normalized := normalizeFrameDevice(raw)
-	if normalized == "" {
-		return DefaultFrameDevice(), nil
+	outputRoot, err := rootfs.New(filepath.Dir(absOutputPath))
+	if err != nil {
+		return nil, fmt.Errorf("open output directory: %w", err)
 	}
-
-	candidate := FrameDevice(normalized)
-	for _, allowed := range supportedFrameDevices {
-		if candidate == allowed {
-			return candidate, nil
+	defer func() {
+		if closeErr := outputRoot.Close(); closeErr != nil {
+			result = nil
+			returnErr = errors.Join(returnErr, fmt.Errorf("close output directory: %w", closeErr))
 		}
-	}
-
-	return "", fmt.Errorf(
-		"unsupported frame device %q (allowed: %s)",
-		raw,
-		strings.Join(FrameDeviceValues(), ", "),
-	)
+	}()
+	return frame(ctx, req, &outputRoot, false)
 }
 
-// Frame composes screenshots through Koubou's YAML pipeline.
-func Frame(ctx context.Context, req FrameRequest) (*FrameResult, error) {
-	return frame(ctx, req, nil)
+// FrameIntoOutputRoot is Frame for callers that anchor the operator-selected
+// output directory once and publish several images into it. req.OutputPath
+// must lie beneath outputRoot; the caller keeps ownership of outputRoot.
+func FrameIntoOutputRoot(ctx context.Context, req FrameRequest, outputRoot rootfs.Root) (*FrameResult, error) {
+	return frame(ctx, req, &outputRoot, false)
 }
 
 // frameIntoRoot is the matrix-only framing path. Koubou still renders into a
-// process-private scratch directory, but the final image is published through
-// the retained rooted destination so a replaced output pathname cannot redirect
-// the write outside the private attempt root.
+// process-private scratch directory, and the input is additionally pinned into
+// a protected staging copy before the final image is published through the
+// retained rooted destination.
 func frameIntoRoot(ctx context.Context, req FrameRequest, destination rootfs.Root) (*FrameResult, error) {
-	return frame(ctx, req, &destination)
+	return frame(ctx, req, &destination, true)
 }
 
-func frame(ctx context.Context, req FrameRequest, rootedOutput *rootfs.Root) (result *FrameResult, returnErr error) {
+// frame renders req and publishes the image through rootedOutput, which may be
+// nil only when req.OutputPath is empty. pinInput stages the input into a
+// protected copy first, for matrix inputs that were not already snapshotted.
+func frame(ctx context.Context, req FrameRequest, rootedOutput *rootfs.Root, pinInput bool) (result *FrameResult, returnErr error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -690,19 +556,21 @@ func frame(ctx context.Context, req FrameRequest, rootedOutput *rootfs.Root) (re
 			return nil, fmt.Errorf("output path is required")
 		}
 
-		spec, ok := frameDeviceKoubouSpecs[device]
-		if !ok {
-			return nil, fmt.Errorf("no Koubou mapping configured for device %q", device)
-		}
-		if err := validateFrameCanvas(spec, req.Canvas); err != nil {
+		spec, _, err := resolveFrameSpec(device, req.FrameColor)
+		if err != nil {
 			return nil, err
+		}
+		if req.Canvas != nil {
+			if _, err := ParseTextPosition(string(req.Canvas.TextPosition)); err != nil {
+				return nil, err
+			}
 		}
 
 		absInputPath, err := filepath.Abs(inputPath)
 		if err != nil {
 			return nil, fmt.Errorf("resolve input path: %w", err)
 		}
-		if rootedOutput == nil {
+		if !pinInput {
 			if err := asc.ValidateImageFile(absInputPath); err != nil {
 				return nil, fmt.Errorf("read input screenshot: %w", err)
 			}
@@ -730,7 +598,7 @@ func frame(ctx context.Context, req FrameRequest, rootedOutput *rootfs.Root) (re
 		var generatedMetadata frameExecutionMetadata
 		generatedWorkAttempt, err = createMatrixPrivateAttemptRoot()
 		if err != nil {
-			if rootedOutput == nil {
+			if !pinInput {
 				return nil, fmt.Errorf("create temp config directory: %w", err)
 			}
 			return nil, fmt.Errorf("create Koubou work directory: %w", err)
@@ -790,18 +658,17 @@ func frame(ctx context.Context, req FrameRequest, rootedOutput *rootfs.Root) (re
 		if matrixFrameWorkRootBeforeReadForTest != nil {
 			matrixFrameWorkRootBeforeReadForTest(generatedWorkRoot.Path())
 		}
-		if rootedOutput != nil {
-			verifiedWorkRoot, verifyErr := generatedWorkRoot.OpenRoot()
-			if verifyErr != nil {
-				return nil, fmt.Errorf("koubou work directory changed during generation: %w", verifyErr)
-			}
-			if closeErr := verifiedWorkRoot.Close(); closeErr != nil {
-				return nil, fmt.Errorf("verify Koubou work directory: %w", closeErr)
-			}
-			generatedRelativePath, err = relativeMatrixOutputPath(generatedWorkRoot.Path(), generatedPath)
-			if err != nil {
-				return nil, fmt.Errorf("koubou output escapes rooted work directory: %w", err)
-			}
+		// Publish only an image Koubou wrote inside the private work root.
+		verifiedWorkRoot, verifyErr := generatedWorkRoot.OpenRoot()
+		if verifyErr != nil {
+			return nil, fmt.Errorf("koubou work directory changed during generation: %w", verifyErr)
+		}
+		if closeErr := verifiedWorkRoot.Close(); closeErr != nil {
+			return nil, fmt.Errorf("verify Koubou work directory: %w", closeErr)
+		}
+		generatedRelativePath, err = relativeMatrixOutputPath(generatedWorkRoot.Path(), generatedPath)
+		if err != nil {
+			return nil, fmt.Errorf("koubou output escapes rooted work directory: %w", err)
 		}
 	}
 
@@ -814,50 +681,34 @@ func frame(ctx context.Context, req FrameRequest, rootedOutput *rootfs.Root) (re
 			return nil, fmt.Errorf("resolve output path: %w", err)
 		}
 		if rootedOutput == nil {
-			if err := os.MkdirAll(filepath.Dir(absOutputPath), 0o755); err != nil {
-				return nil, fmt.Errorf("create output directory: %w", err)
-			}
-			outputHash, err = copyFileWithLimit(ctx, generatedPath, absOutputPath, maxMatrixArtifactBytes)
-			if err != nil {
-				return nil, err
-			}
-		} else {
-			rootedOutputPath, err = relativeMatrixOutputPath(rootedOutput.Path(), absOutputPath)
-			if err != nil {
-				return nil, fmt.Errorf("frame output escapes rooted destination: %w", err)
-			}
-			if matrixFrameRootBeforePublishForTest != nil {
-				matrixFrameRootBeforePublishForTest(absOutputPath)
-			}
-			var sourceFile *os.File
-			var openErr error
-			if generatedWorkRoot != nil {
-				sourceFile, openErr = generatedWorkRoot.OpenFile(generatedRelativePath)
-			} else {
-				sourceFile, openErr = os.Open(generatedPath)
-			}
-			if openErr != nil {
-				return nil, fmt.Errorf("open generated screenshot: %w", openErr)
-			}
-			limited := &matrixArtifactLimitReader{
-				reader:    &matrixContextReader{ctx: ctx, reader: sourceFile},
-				remaining: maxMatrixArtifactBytes,
-			}
-			hasher := sha256.New()
-			written, writeErr := rootedOutput.WriteFromPreservingMode(rootedOutputPath, io.TeeReader(limited, hasher), 0o644)
-			closeErr := sourceFile.Close()
-			if writeErr != nil {
-				return nil, errors.Join(fmt.Errorf("publish framed screenshot: %w", writeErr), closeErr)
-			}
-			if written > maxMatrixArtifactBytes {
-				return nil, errors.New("framed screenshot exceeds the artifact size limit")
-			}
-			if closeErr != nil {
-				return nil, fmt.Errorf("close generated screenshot: %w", closeErr)
-			}
-			outputHash = hex.EncodeToString(hasher.Sum(nil))
-			absOutputPath = filepath.Join(rootedOutput.Path(), rootedOutputPath)
+			return nil, errors.New("output root is required to publish the framed screenshot")
 		}
+		rootedOutputPath, err = relativeMatrixOutputPath(rootedOutput.Path(), absOutputPath)
+		if err != nil {
+			return nil, fmt.Errorf("frame output escapes rooted destination: %w", err)
+		}
+		if matrixFrameRootBeforePublishForTest != nil {
+			matrixFrameRootBeforePublishForTest(absOutputPath)
+		}
+		var sourceFile *os.File
+		var openErr error
+		if generatedWorkRoot != nil {
+			sourceFile, openErr = generatedWorkRoot.OpenFile(generatedRelativePath)
+		} else {
+			sourceFile, openErr = os.Open(generatedPath)
+		}
+		if openErr != nil {
+			return nil, fmt.Errorf("open generated screenshot: %w", openErr)
+		}
+		outputHash, err = publishGeneratedScreenshot(ctx, sourceFile, *rootedOutput, rootedOutputPath, maxMatrixArtifactBytes)
+		closeErr := sourceFile.Close()
+		if err != nil {
+			return nil, errors.Join(err, closeErr)
+		}
+		if closeErr != nil {
+			return nil, fmt.Errorf("close generated screenshot: %w", closeErr)
+		}
+		absOutputPath = filepath.Join(rootedOutput.Path(), rootedOutputPath)
 		finalPath = absOutputPath
 	}
 
@@ -964,14 +815,14 @@ func createDefaultKoubouConfigAtRoot(
 	}
 
 	scale := 1.0
-	kouOutputSize := namedOutputSize(spec.OutputSize)
+	kouOutputSize := spec.koubouOutputSize()
 	opts := canvas
 	if opts == nil {
 		opts = &CanvasOptions{}
 	}
 
 	if spec.Canvas {
-		if cw, ch, ok := resolveKoubouOutputSize(spec.OutputSize); ok {
+		if cw, ch, ok := spec.outputDimensions(); ok {
 			kouOutputSize = dimsOutputSize(cw, ch)
 			if dims, err := asc.ReadImageDimensions(absInputPath); err == nil && dims.Width > 0 && dims.Height > 0 {
 				maxH := float64(ch)
@@ -993,68 +844,40 @@ func createDefaultKoubouConfigAtRoot(
 	var contentItems []koubouDefaultContentItem
 	windowY := canvasWindowCenterY
 
-	if spec.Canvas {
-		if opts.BGColor != "" {
-			background = &koubouGradientConfig{
-				Type:   "linear",
-				Colors: []string{opts.BGColor, opts.BGColor},
-			}
-		} else {
-			background = &koubouGradientConfig{
-				Type:      "linear",
-				Colors:    []string{canvasBGColorFrom, canvasBGColorTo},
-				Direction: canvasBGAngle,
-			}
+	switch {
+	case opts.BGColor != "":
+		background = &koubouGradientConfig{
+			Type:   "linear",
+			Colors: []string{opts.BGColor, opts.BGColor},
 		}
+	case spec.Canvas || opts.hasText():
+		// White default text needs a dark backdrop. Bezel frames without text
+		// keep Koubou's transparent canvas.
+		background = &koubouGradientConfig{
+			Type:      "linear",
+			Colors:    []string{canvasBGColorFrom, canvasBGColorTo},
+			Direction: canvasBGAngle,
+		}
+	}
 
+	if spec.Canvas {
 		if opts.hasText() {
 			windowY = canvasWindowTextY
-		}
-
-		if opts.Title != "" {
-			tc := opts.TitleColor
-			if tc == "" {
-				tc = canvasDefaultTitleColor
+			if opts.TextPosition == TextPositionBottom {
+				windowY = canvasWindowBottomTextY
 			}
-			contentItems = append(contentItems, koubouDefaultContentItem{
-				Type:      "text",
-				Content:   opts.Title,
-				Position:  [2]string{"50%", canvasTitleY},
-				Size:      canvasTitleFontSize,
-				Weight:    "bold",
-				Color:     tc,
-				Alignment: "center",
-			})
 		}
-
-		subtitleY := canvasSubtitleY
-		if opts.Title == "" {
-			subtitleY = canvasSubtitleSoloY
-		}
-		if opts.Subtitle != "" {
-			sc := opts.SubtitleColor
-			if sc == "" {
-				sc = canvasDefaultSubtitleColor
-			}
-			contentItems = append(contentItems, koubouDefaultContentItem{
-				Type:      "text",
-				Content:   opts.Subtitle,
-				Position:  [2]string{"50%", subtitleY},
-				Size:      canvasSubtitleFontSize,
-				Color:     sc,
-				Alignment: "center",
-			})
-		}
-
+		contentItems = append(contentItems, textContentItems(opts, canvasTextLayout(opts.TextPosition))...)
 		contentItems = append(contentItems, koubouDefaultContentItem{
-			Type:     "image",
-			Asset:    absInputPath,
-			Position: [2]string{"50%", windowY},
-			Scale:    scale,
-			Frame:    boolPtr(false),
+			Type:      "image",
+			Asset:     absInputPath,
+			Position:  [2]string{"50%", windowY},
+			Scale:     scale,
+			Frame:     boolPtr(false),
+			Alignment: koubouCenterAlignment,
 		})
 	} else {
-		contentItems = bezelContentItems(absInputPath, scale, opts)
+		contentItems = bezelContentItems(absInputPath, spec, opts)
 	}
 
 	configPath := filepath.Join(workDir, "frame.yaml")
@@ -1111,36 +934,11 @@ func createDefaultKoubouConfigAtRoot(
 		FrameRef:    spec.FrameName,
 		DisplayType: spec.DisplayType,
 	}
-	if width, height, ok := resolveKoubouOutputSize(spec.OutputSize); ok {
+	if width, height, ok := spec.outputDimensions(); ok {
 		metadata.UploadWidth = width
 		metadata.UploadHeight = height
 	}
 	return configPath, metadata, nil
-}
-
-func resolveFrameDeviceForConfig(frameRef, fallback string) string {
-	trimmedFrameRef := strings.TrimSpace(frameRef)
-	if trimmedFrameRef == "" {
-		return fallback
-	}
-	for device, spec := range frameDeviceKoubouSpecs {
-		if frameSpecMatchesFrameRef(spec, trimmedFrameRef) {
-			return string(device)
-		}
-	}
-	return trimmedFrameRef
-}
-
-func frameSpecMatchesFrameRef(spec frameDeviceKoubouSpec, frameRef string) bool {
-	if strings.EqualFold(strings.TrimSpace(spec.FrameName), frameRef) {
-		return true
-	}
-	for _, alias := range spec.Aliases {
-		if strings.EqualFold(strings.TrimSpace(alias), frameRef) {
-			return true
-		}
-	}
-	return false
 }
 
 // ResolveFrameDeviceFromConfig resolves the config device to a supported CLI slug.
@@ -1209,6 +1007,10 @@ func koubouDisplayTypeForSizeName(sizeName string) (string, bool) {
 		return "APP_IPHONE_58", true
 	case "iphone5_5":
 		return "APP_IPHONE_55", true
+	case "ipadpro13", "ipadpro12_9":
+		return "APP_IPAD_PRO_3GEN_129", true
+	case "ipadpro11":
+		return "APP_IPAD_PRO_3GEN_11", true
 	default:
 		return "", false
 	}
@@ -1226,6 +1028,9 @@ func resolveKoubouOutputSize(value any) (int, int, bool) {
 		"iphone6_1":     {Width: 1179, Height: 2556},
 		"iphone5_8":     {Width: 1170, Height: 2532},
 		"iphone5_5":     {Width: 1242, Height: 2208},
+		"ipadpro13":     {Width: 2064, Height: 2752},
+		"ipadpro12_9":   {Width: 2048, Height: 2732},
+		"ipadpro11":     {Width: 1668, Height: 2388},
 		// Mac App Store desktop (16:10)
 		"appdesktop_1280": {Width: 1280, Height: 800},
 		"appdesktop_1440": {Width: 1440, Height: 900},
@@ -1401,6 +1206,15 @@ func ensurePinnedKoubouVersion(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("kou --version output does not include a semantic version: %q", strings.TrimSpace(string(output)))
 	}
 	if detectedVersion != pinnedKoubouVersion {
+		if semver.Compare("v"+detectedVersion, "v"+pinnedKoubouVersion) < 0 {
+			return "", fmt.Errorf(
+				"unsupported Koubou version %s; this ASC release is pinned to %s. Upgrade with: %s (Homebrew: %s)",
+				detectedVersion,
+				pinnedKoubouVersion,
+				pinnedKoubouUpgradeCommand(),
+				pinnedKoubouBrewUpgradeCommand,
+			)
+		}
 		return "", fmt.Errorf(
 			"unsupported Koubou version %s; this ASC release is pinned to %s. Install with: %s",
 			detectedVersion,
@@ -1471,6 +1285,13 @@ func parseKoubouVersion(output []byte) (string, bool) {
 
 func pinnedKoubouInstallCommand() string {
 	return fmt.Sprintf("pip install koubou==%s", pinnedKoubouVersion)
+}
+
+// pinnedKoubouBrewUpgradeCommand upgrades a Homebrew install from Koubou's tap.
+const pinnedKoubouBrewUpgradeCommand = "brew upgrade bitomule/tap/koubou"
+
+func pinnedKoubouUpgradeCommand() string {
+	return fmt.Sprintf("pip install -U koubou==%s", pinnedKoubouVersion)
 }
 
 func pinnedKoubouSetupFramesCommand() string {
@@ -1581,15 +1402,12 @@ func (reader *matrixArtifactLimitReader) Read(buffer []byte) (int, error) {
 	return n, err
 }
 
-func copyFileWithLimit(ctx context.Context, sourcePath, destinationPath string, limit int64) (digest string, returnErr error) {
-	sourceFile, err := os.Open(sourcePath)
-	if err != nil {
-		return "", fmt.Errorf("open generated screenshot: %w", err)
-	}
-	defer func() {
-		returnErr = errors.Join(returnErr, sourceFile.Close())
-	}()
-	sourceInfo, err := sourceFile.Stat()
+// publishGeneratedScreenshot atomically writes the Koubou output in source to
+// name beneath the retained output root and returns its SHA-256. A source that
+// is not a regular file or exceeds limit is rejected before any byte is
+// published. The caller keeps ownership of source.
+func publishGeneratedScreenshot(ctx context.Context, source *os.File, outputRoot rootfs.Root, name string, limit int64) (string, error) {
+	sourceInfo, err := source.Stat()
 	if err != nil {
 		return "", fmt.Errorf("inspect generated screenshot: %w", err)
 	}
@@ -1599,26 +1417,17 @@ func copyFileWithLimit(ctx context.Context, sourcePath, destinationPath string, 
 	if sourceInfo.Size() > limit {
 		return "", errors.New("framed screenshot exceeds the artifact size limit")
 	}
-
-	absoluteDestination, err := filepath.Abs(destinationPath)
-	if err != nil {
-		return "", fmt.Errorf("resolve final screenshot: %w", err)
+	limited := &matrixArtifactLimitReader{
+		reader:    &matrixContextReader{ctx: ctx, reader: source},
+		remaining: limit,
 	}
-	destinationRoot, err := rootfs.New(filepath.Dir(absoluteDestination))
-	if err != nil {
-		return "", fmt.Errorf("open final screenshot root: %w", err)
-	}
-	defer func() {
-		returnErr = errors.Join(returnErr, destinationRoot.Close())
-	}()
-	relativeDestination, err := filepath.Rel(destinationRoot.Path(), absoluteDestination)
-	if err != nil {
-		return "", fmt.Errorf("resolve final screenshot path: %w", err)
-	}
-	limited := &matrixArtifactLimitReader{reader: &matrixContextReader{ctx: ctx, reader: sourceFile}, remaining: limit}
 	hasher := sha256.New()
-	if _, err := destinationRoot.WriteFromPreservingMode(relativeDestination, io.TeeReader(limited, hasher), 0o644); err != nil {
-		return "", fmt.Errorf("publish final screenshot: %w", err)
+	written, err := outputRoot.WriteFromPreservingMode(name, io.TeeReader(limited, hasher), 0o644)
+	if err != nil {
+		return "", fmt.Errorf("publish framed screenshot: %w", err)
+	}
+	if written > limit {
+		return "", errors.New("framed screenshot exceeds the artifact size limit")
 	}
 	return hex.EncodeToString(hasher.Sum(nil)), nil
 }
@@ -1631,16 +1440,4 @@ func resetKoubouVersionCacheForTest() {
 	cachedKoubouResolvedPATH = ""
 	cachedKoubouVersionIsGood = false
 	cachedKoubouFramesReady = false
-}
-
-func normalizeFrameDevice(raw string) string {
-	value := strings.TrimSpace(strings.ToLower(raw))
-	if value == "" {
-		return ""
-	}
-
-	parts := strings.FieldsFunc(value, func(r rune) bool {
-		return r == ' ' || r == '-' || r == '_'
-	})
-	return strings.Join(parts, "-")
 }

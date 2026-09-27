@@ -171,6 +171,35 @@ func TestResumeFingerprintInvalidatesLegacySchema(t *testing.T) {
 	}
 }
 
+func TestResumeFingerprintCoversFrameColorAndTextStyle(t *testing.T) {
+	base := FrameResumeFingerprint{SourceHash: "source", Device: "ipad-pro-13", Title: "Home"}
+	previousSchema := sha256.Sum256([]byte(strings.Join([]string{
+		"2",
+		pinnedKoubouVersion,
+		base.SourceHash,
+		base.Device,
+		base.Title,
+		base.Subtitle,
+		base.TitleColor,
+		base.SubtitleColor,
+		base.Background,
+		base.OverlayHash,
+	}, "\x00")))
+	current := FingerprintFrameResume(base)
+	if current == hex.EncodeToString(previousSchema[:]) {
+		t.Fatal("layout change must invalidate schema 2 resume records")
+	}
+	for name, changed := range map[string]FrameResumeFingerprint{
+		"frame color":   {SourceHash: "source", Device: "ipad-pro-13", Title: "Home", FrameColor: "space-gray"},
+		"font":          {SourceHash: "source", Device: "ipad-pro-13", Title: "Home", Font: "Helvetica"},
+		"text position": {SourceHash: "source", Device: "ipad-pro-13", Title: "Home", TextPosition: "bottom"},
+	} {
+		if FingerprintFrameResume(changed) == current {
+			t.Fatalf("%s must change the resume fingerprint", name)
+		}
+	}
+}
+
 func TestSaveFrameResumeStateRejectsSymlink(t *testing.T) {
 	dir := t.TempDir()
 	outside := filepath.Join(t.TempDir(), "outside.json")

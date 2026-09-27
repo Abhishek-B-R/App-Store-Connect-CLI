@@ -370,9 +370,24 @@ func (s *AWSSecretsManagerStore) listPrefixedSecrets(ctx context.Context) (map[s
 	return nil, fmt.Errorf("aws secrets manager: list secrets exceeded %d pages", awsMaxListPages)
 }
 
+var awsSecretsErrorCodes = map[string]struct{}{
+	"AccessDeniedException": {}, "DecryptionFailure": {}, "EncryptionFailure": {}, "InternalServiceError": {},
+	"InvalidNextTokenException": {}, "InvalidParameterException": {}, "InvalidRequestException": {},
+	"LimitExceededException": {}, "ResourceExistsException": {}, "ResourceNotFoundException": {},
+	"ThrottlingException": {}, "UnrecognizedClientException": {}, "ExpiredTokenException": {},
+	"InvalidSignatureException": {}, "RequestExpired": {}, "IncompleteSignature": {},
+	"MissingAuthenticationToken": {}, "ValidationException": {}, "ServiceUnavailable": {},
+}
+
 // SDK errors may contain malformed credential_process stdout, including secret
 // keys and session tokens. Expose only stable classifications, never raw text.
 func sanitizedAWSSecretsError(err error) error {
+	return sanitizedAWSError(err, awsSecretsErrorCodes)
+}
+
+// sanitizedAWSError keeps read-only refusals, cancellation, recognized service
+// error codes, and HTTP status while dropping every provider-supplied message.
+func sanitizedAWSError(err error, knownCodes map[string]struct{}) error {
 	if errors.Is(err, readonly.ErrRefused) {
 		return err
 	}
@@ -384,19 +399,17 @@ func sanitizedAWSSecretsError(err error) error {
 	}
 	var apiError smithy.APIError
 	if errors.As(err, &apiError) {
-		switch code := apiError.ErrorCode(); code {
-		case "AccessDeniedException", "DecryptionFailure", "EncryptionFailure", "InternalServiceError",
-			"InvalidNextTokenException", "InvalidParameterException", "InvalidRequestException",
-			"LimitExceededException", "ResourceExistsException", "ResourceNotFoundException",
-			"ThrottlingException", "UnrecognizedClientException", "ExpiredTokenException",
-			"InvalidSignatureException", "RequestExpired", "IncompleteSignature",
-			"MissingAuthenticationToken", "ValidationException", "ServiceUnavailable":
-			return errors.New(code)
+		if _, known := knownCodes[apiError.ErrorCode()]; known {
+			return errors.New(apiError.ErrorCode())
 		}
 	}
 	var responseError *transporthttp.ResponseError
-	if errors.As(err, &responseError) {
+	if errors.As(err, &responseError) && responseError.HTTPStatusCode() != 0 {
 		return fmt.Errorf("HTTP %d", responseError.HTTPStatusCode())
+	}
+	var sendError *transporthttp.RequestSendError
+	if errors.As(err, &sendError) {
+		return errors.New("AWS request could not be sent")
 	}
 	return errors.New("AWS request or credential resolution failed")
 }

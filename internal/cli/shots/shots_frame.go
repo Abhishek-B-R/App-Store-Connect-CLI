@@ -25,6 +25,9 @@ const defaultShotsFrameOutputDir = "./screenshots/framed"
 var watchUnsupportedFrameFlags = []string{
 	"bg-color",
 	"device",
+	"font",
+	"frame-color",
+	"input-dir",
 	"name",
 	"output-dir",
 	"output-path",
@@ -32,16 +35,24 @@ var watchUnsupportedFrameFlags = []string{
 	"resume",
 	"subtitle",
 	"subtitle-color",
+	"text-position",
 	"title",
 	"title-color",
 }
 
-var shotsFrameFn = screenshots.Frame
+// shotsFrameFn frames one --input, anchoring the output directory itself.
+// shotsFrameIntoFn frames into an output root the caller retains, so every
+// --input-dir file publishes into the directory selected at the start.
+var (
+	shotsFrameFn     = screenshots.Frame
+	shotsFrameIntoFn = screenshots.FrameIntoOutputRoot
+)
 
 // ShotsFrameCommand returns the screenshots frame subcommand.
 func ShotsFrameCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("frame", flag.ExitOnError)
-	inputPath := fs.String("input", "", "Path to raw screenshot PNG (required)")
+	inputPath := fs.String("input", "", "Path to raw screenshot PNG (required unless --input-dir or --config is set)")
+	inputDir := fs.String("input-dir", "", "Directory of raw screenshot PNGs to frame in one batch (non-recursive)")
 	configPath := fs.String("config", "", "Path to Koubou YAML config (optional)")
 	outputPath := fs.String("output-path", "", "Exact output file path for framed PNG (optional)")
 	outputDir := fs.String("output-dir", defaultShotsFrameOutputDir, "Output directory when --output-path is not set")
@@ -51,13 +62,16 @@ func ShotsFrameCommand() *ffcli.Command {
 		string(screenshots.DefaultFrameDevice()),
 		fmt.Sprintf("Frame device: %s", strings.Join(screenshots.FrameDeviceValues(), ", ")),
 	)
+	frameColor := fs.String("frame-color", "", "Frame color variant for --device (see list-frame-devices); defaults to the device's first color")
 	title := fs.String("title", "", "Title text overlay")
 	subtitle := fs.String("subtitle", "", "Subtitle or keyword text overlay")
-	bgColor := fs.String("bg-color", "", "Solid background color in canvas mode (e.g. #1a1a2e); defaults to dark gradient")
+	bgColor := fs.String("bg-color", "", "Solid background color (e.g. #1a1a2e); defaults to a dark gradient behind text overlays")
 	titleColor := fs.String("title-color", "", "Title text color (e.g. #000000); defaults to #ffffff")
 	subtitleColor := fs.String("subtitle-color", "", "Subtitle text color (e.g. #333333); defaults to #aaaaaa")
+	font := fs.String("font", "", "Font family for title and subtitle overlays (installed font name; defaults to Arial)")
+	textPosition := fs.String("text-position", string(screenshots.TextPositionTop), "Title and subtitle placement: "+strings.Join(screenshots.TextPositionValues(), ", "))
 	overlayConfig := fs.String("overlay-config", "", "JSON overlay config with default and data[] title, keyword, and background entries")
-	resume := fs.Bool("resume", false, "Skip framing when the source hash matches .asc/reports/screenshots-frame/state.json")
+	resume := fs.Bool("resume", false, "Skip inputs whose source hash and render settings match .asc/reports/screenshots-frame/state.json")
 	output := shared.BindOutputFlags(fs)
 	watch := fs.Bool("watch", false, "Watch config and asset files for changes, auto-regenerate (requires --config)")
 	watchDebounce := fs.Duration("watch-debounce", 500*time.Millisecond, "Debounce delay between change detection and regeneration")
@@ -66,13 +80,24 @@ func ShotsFrameCommand() *ffcli.Command {
 
 	return &ffcli.Command{
 		Name:       "frame",
-		ShortUsage: "asc screenshots frame (--input ./screenshots/raw/home.png | --config ./koubou.yaml) [flags]",
+		ShortUsage: "asc screenshots frame (--input ./screenshots/raw/home.png | --input-dir ./screenshots/raw | --config ./koubou.yaml) [flags]",
 		ShortHelp:  "Compose a screenshot into an Apple device frame.",
 		LongHelp: `Compose screenshots using Koubou's YAML-based rendering flow.
 
-Requires Koubou v0.18.1 (pip install koubou==0.18.1).
+Requires Koubou v0.20.0 (pip install koubou==0.20.0). Upgrading from 0.18.x:
+pip install -U koubou==0.20.0, then kou setup-frames.
 
-Use either --input (auto-generated Koubou config) or --config (explicit Koubou YAML).
+Use --input for one screenshot, --input-dir to frame every PNG in a
+directory, or --config for an explicit Koubou YAML config.
+
+Devices cover iPhone, iPad, Apple Watch, Apple TV, and Mac. Run
+asc screenshots list-frame-devices to see each device's --frame-color values.
+Title and subtitle overlays, --font, --text-position, and --bg-color apply to
+every device.
+
+With --input-dir, a failed input does not stop the batch: the receipt lists
+each input's status and the command exits 1 if any input failed. Add --resume
+to record completed inputs and skip them on the next run.
 
 Use --watch with --config to start a live watcher that auto-regenerates
 framed screenshots whenever the YAML config or referenced raw assets change.`,
@@ -83,11 +108,14 @@ framed screenshots whenever the YAML config or referenced raw assets change.`,
 			// valid path can select a different filesystem entry.
 			configVal := *configPath
 			inputVal := *inputPath
+			inputDirVal := *inputDir
 			configSet := strings.TrimSpace(configVal) != ""
 			inputSet := strings.TrimSpace(inputVal) != ""
+			inputDirSet := strings.TrimSpace(inputDirVal) != ""
 			watchDebounceSet := false
 			watchReviewDirSet := false
 			watchRawDirSet := false
+			textPositionSet := false
 			// Watch mode regenerates straight from the Koubou YAML config, so
 			// the single-shot device, canvas and output flags have nowhere to
 			// apply. Collect the ones the caller set so they are rejected
@@ -102,13 +130,14 @@ framed screenshots whenever the YAML config or referenced raw assets change.`,
 					watchReviewDirSet = true
 				case "watch-raw-dir":
 					watchRawDirSet = true
-				default:
-					if slices.Contains(watchUnsupportedFrameFlags, flagValue.Name) {
-						watchUnsupportedFlags = append(watchUnsupportedFlags, "--"+flagValue.Name)
-					}
+				case "text-position":
+					textPositionSet = true
+				}
+				if slices.Contains(watchUnsupportedFrameFlags, flagValue.Name) {
+					watchUnsupportedFlags = append(watchUnsupportedFlags, "--"+flagValue.Name)
 				}
 			})
-			if !configSet && !inputSet {
+			if !configSet && !inputSet && !inputDirSet {
 				fmt.Fprintln(os.Stderr, "Error: --input is required when --config is not set")
 				return shared.MissingRequiredUsageError("--input")
 			}
@@ -129,6 +158,12 @@ framed screenshots whenever the YAML config or referenced raw assets change.`,
 					"%s cannot be used with --watch; watch mode regenerates from the Koubou YAML config",
 					strings.Join(watchUnsupportedFlags, ", "),
 				)), shared.DiagnosticConflictingInput, parameter)
+			}
+			if inputDirSet && (inputSet || configSet) {
+				return shared.WithDiagnostic(shared.UsageError("use either --input, --input-dir, or --config"), shared.DiagnosticConflictingInput, "--input-dir")
+			}
+			if inputDirSet && (strings.TrimSpace(*outputPath) != "" || strings.TrimSpace(*name) != "") {
+				return shared.WithDiagnostic(shared.UsageError("--output-path and --name cannot be used with --input-dir; outputs are named <input>-<device>.png in --output-dir"), shared.DiagnosticConflictingInput, "--input-dir")
 			}
 			if !*watch {
 				switch {
@@ -199,14 +234,78 @@ framed screenshots whenever the YAML config or referenced raw assets change.`,
 				canvasParameters = append(canvasParameters, "--subtitle-color")
 			}
 			hasCanvasFlags := len(canvasParameters) > 0
-			hasTextFlags := strings.TrimSpace(*title) != "" || strings.TrimSpace(*subtitle) != "" || strings.TrimSpace(*titleColor) != "" || strings.TrimSpace(*subtitleColor) != ""
+			fontSet := strings.TrimSpace(*font) != ""
+			frameColorSet := strings.TrimSpace(*frameColor) != ""
 			if hasCanvasFlags && configSet {
 				fmt.Fprintf(os.Stderr, "Error: --title, --subtitle, --bg-color, --title-color, --subtitle-color cannot be used with --config; set these in the YAML config instead\n")
 				return shared.WithDiagnostic(flag.ErrHelp, shared.DiagnosticConflictingInput, "--config")
 			}
-			if strings.TrimSpace(*bgColor) != "" && !screenshots.IsCanvasDevice(deviceVal) {
-				fmt.Fprintln(os.Stderr, "Error: --bg-color only applies to canvas devices (e.g. --device mac)")
-				return shared.WithDiagnostic(flag.ErrHelp, shared.DiagnosticConflictingInput, "--bg-color")
+			if configSet && (frameColorSet || fontSet || textPositionSet) {
+				return shared.WithDiagnostic(shared.UsageError("--frame-color, --font, and --text-position cannot be used with --config; set the frame, font, and text positions in the YAML config instead"), shared.DiagnosticConflictingInput, "--config")
+			}
+
+			frameColorID, err := screenshots.ResolveFrameColor(deviceVal, *frameColor)
+			if err != nil {
+				return shared.WithDiagnostic(shared.UsageError("--frame-color: "+err.Error()), shared.DiagnosticInvalidInput, "--frame-color")
+			}
+			textPositionVal, err := screenshots.ParseTextPosition(*textPosition)
+			if err != nil {
+				return shared.WithDiagnostic(shared.UsageError("--text-position: "+err.Error()), shared.DiagnosticInvalidInput, "--text-position")
+			}
+			hasTextSource := strings.TrimSpace(*title) != "" || strings.TrimSpace(*subtitle) != "" || strings.TrimSpace(*overlayConfig) != ""
+			if fontSet && !hasTextSource {
+				return shared.WithDiagnostic(shared.UsageError("--font requires --title, --subtitle, or --overlay-config"), shared.DiagnosticConflictingInput, "--font")
+			}
+			if textPositionSet && !hasTextSource {
+				return shared.WithDiagnostic(shared.UsageError("--text-position requires --title, --subtitle, or --overlay-config"), shared.DiagnosticConflictingInput, "--text-position")
+			}
+
+			var baseCanvas *screenshots.CanvasOptions
+			if hasCanvasFlags || fontSet || textPositionSet {
+				baseCanvas = &screenshots.CanvasOptions{
+					Title:         strings.TrimSpace(*title),
+					Subtitle:      strings.TrimSpace(*subtitle),
+					BGColor:       strings.TrimSpace(*bgColor),
+					TitleColor:    strings.TrimSpace(*titleColor),
+					SubtitleColor: strings.TrimSpace(*subtitleColor),
+					Font:          strings.TrimSpace(*font),
+					TextPosition:  textPositionVal,
+				}
+			}
+
+			settings := frameRenderSettings{
+				device:          deviceVal,
+				frameColor:      frameColorID,
+				base:            baseCanvas,
+				fontSet:         fontSet,
+				textPositionSet: textPositionSet,
+			}
+			if strings.TrimSpace(*overlayConfig) != "" {
+				if configSet {
+					fmt.Fprintln(os.Stderr, "Error: --overlay-config cannot be used with --config")
+					return shared.WithDiagnostic(flag.ErrHelp, shared.DiagnosticConflictingInput, "--overlay-config")
+				}
+				loaded, hash, err := screenshots.LoadOverlayConfig(*overlayConfig)
+				if err != nil {
+					return fmt.Errorf("screenshots frame: %w", err)
+				}
+				settings.overlay = &loaded
+				settings.overlayHash = hash
+			}
+			if *resume && configSet {
+				fmt.Fprintln(os.Stderr, "Error: --resume cannot be used with --config")
+				return shared.WithDiagnostic(flag.ErrHelp, shared.DiagnosticConflictingInput, "--resume")
+			}
+
+			if inputDirSet {
+				return runFrameBatch(ctx, frameBatchOptions{
+					inputDir:  inputDirVal,
+					outputDir: *outputDir,
+					resume:    *resume,
+					settings:  settings,
+					output:    *output.Output,
+					pretty:    *output.Pretty,
+				})
 			}
 
 			absInput := ""
@@ -228,63 +327,28 @@ framed screenshots whenever the YAML config or referenced raw assets change.`,
 				return fmt.Errorf("screenshots frame: %w", err)
 			}
 
+			canvasOpts, err := settings.canvasFor(absInput)
+			if err != nil {
+				return err
+			}
+			if err := settings.requireStyledText(canvasOpts != nil && canvasOpts.Title+canvasOpts.Subtitle != ""); err != nil {
+				return err
+			}
+
 			timeoutCtx, cancel := shared.ContextWithTimeout(ctx)
 			defer cancel()
 
-			var canvasOpts *screenshots.CanvasOptions
-			if hasTextFlags || (strings.TrimSpace(*bgColor) != "" && screenshots.IsCanvasDevice(deviceVal)) {
-				canvasOpts = &screenshots.CanvasOptions{
-					Title:         strings.TrimSpace(*title),
-					Subtitle:      strings.TrimSpace(*subtitle),
-					BGColor:       strings.TrimSpace(*bgColor),
-					TitleColor:    strings.TrimSpace(*titleColor),
-					SubtitleColor: strings.TrimSpace(*subtitleColor),
-				}
+			request := screenshots.FrameRequest{
+				InputPath:  absInput,
+				OutputPath: outPath,
+				Device:     string(deviceVal),
+				ConfigPath: configVal,
+				Canvas:     canvasOpts,
+			}
+			if !configSet {
+				request.FrameColor = frameColorID
 			}
 
-			overlayHash := ""
-			if strings.TrimSpace(*overlayConfig) != "" {
-				if configSet {
-					fmt.Fprintln(os.Stderr, "Error: --overlay-config cannot be used with --config")
-					return shared.WithDiagnostic(flag.ErrHelp, shared.DiagnosticConflictingInput, "--overlay-config")
-				}
-				loaded, hash, err := screenshots.LoadOverlayConfig(*overlayConfig)
-				if err != nil {
-					return fmt.Errorf("screenshots frame: %w", err)
-				}
-				overlayHash = hash
-				matched := screenshots.OverlayToCanvas(screenshots.MatchOverlay(loaded, absInput))
-				if canvasOpts == nil {
-					canvasOpts = &screenshots.CanvasOptions{}
-				}
-				if canvasOpts.Title == "" {
-					canvasOpts.Title = matched.Title
-				}
-				if canvasOpts.Subtitle == "" {
-					canvasOpts.Subtitle = matched.Subtitle
-				}
-				if canvasOpts.BGColor == "" {
-					canvasOpts.BGColor = matched.BGColor
-				}
-			}
-
-			if canvasOpts != nil && canvasOpts.TitleColor != "" && canvasOpts.Title == "" {
-				fmt.Fprintln(os.Stderr, "Error: --title-color requires --title")
-				return shared.WithDiagnostic(flag.ErrHelp, shared.DiagnosticConflictingInput, "--title-color")
-			}
-			if canvasOpts != nil && canvasOpts.SubtitleColor != "" && canvasOpts.Subtitle == "" {
-				fmt.Fprintln(os.Stderr, "Error: --subtitle-color requires --subtitle")
-				return shared.WithDiagnostic(flag.ErrHelp, shared.DiagnosticConflictingInput, "--subtitle-color")
-			}
-			if canvasOpts != nil && strings.TrimSpace(canvasOpts.BGColor) != "" && !screenshots.IsCanvasDevice(deviceVal) {
-				fmt.Fprintln(os.Stderr, "Error: background overlays only apply to canvas devices (e.g. --device mac)")
-				return shared.WithDiagnostic(flag.ErrHelp, shared.DiagnosticConflictingInput, "--overlay-config")
-			}
-
-			if *resume && configSet {
-				fmt.Fprintln(os.Stderr, "Error: --resume cannot be used with --config")
-				return shared.WithDiagnostic(flag.ErrHelp, shared.DiagnosticConflictingInput, "--resume")
-			}
 			if *resume && inputSet {
 				root, err := frameResumeRoot()
 				if err != nil {
@@ -293,44 +357,19 @@ framed screenshots whenever the YAML config or referenced raw assets change.`,
 				defer root.Close()
 				var framed *screenshots.FrameResult
 				err = screenshots.WithFrameResumeLock(timeoutCtx, root, func() error {
-					snapshot, snapshotErr := screenshots.OpenFrameInputSnapshot(timeoutCtx, absInput)
-					if snapshotErr != nil {
-						return fmt.Errorf("screenshots frame: snapshot input: %w", snapshotErr)
-					}
-					finishSnapshot := func(primary error) error {
-						return errors.Join(primary, snapshot.Close())
-					}
-					fingerprint := frameResumeFingerprint(snapshot.SourceHash(), string(deviceVal), overlayHash, canvasOpts)
 					state, loadErr := screenshots.LoadFrameResumeState(root, screenshots.FrameResumeStateRel)
 					if loadErr != nil {
-						return finishSnapshot(fmt.Errorf("screenshots frame: read resume state: %w", loadErr))
+						return fmt.Errorf("screenshots frame: read resume state: %w", loadErr)
 					}
-					if result, ok := screenshots.ResumeEntry(timeoutCtx, state, outPath, fingerprint); ok {
-						framed = &result
-						return finishSnapshot(nil)
+					openInput := func(ctx context.Context) (*screenshots.FrameInputSnapshot, error) {
+						return screenshots.OpenFrameInputSnapshot(ctx, request.InputPath)
 					}
-					result, frameErr := shotsFrameFn(timeoutCtx, screenshots.FrameRequest{
-						InputPath:  snapshot.Path(),
-						OutputPath: outPath,
-						Device:     string(deviceVal),
-						ConfigPath: configVal,
-						Canvas:     canvasOpts,
-					})
+					result, frameErr := frameSnapshot(timeoutCtx, openInput, request, settings, &state, root, nil)
 					if frameErr != nil {
-						return finishSnapshot(fmt.Errorf("screenshots frame: %w", frameErr))
-					}
-					stored := *result
-					stored.Skipped = false
-					state.Files[outPath] = screenshots.FrameResumeEntry{
-						Fingerprint: fingerprint,
-						OutputHash:  result.OutputHash,
-						Result:      stored,
-					}
-					if saveErr := screenshots.SaveFrameResumeState(root, screenshots.FrameResumeStateRel, state); saveErr != nil {
-						return finishSnapshot(fmt.Errorf("screenshots frame: write resume state: %w", saveErr))
+						return fmt.Errorf("screenshots frame: %w", frameErr)
 					}
 					framed = result
-					return finishSnapshot(nil)
+					return nil
 				})
 				if err != nil {
 					return err
@@ -338,13 +377,7 @@ framed screenshots whenever the YAML config or referenced raw assets change.`,
 				return shared.PrintOutput(framed, *output.Output, *output.Pretty)
 			}
 
-			result, err := shotsFrameFn(timeoutCtx, screenshots.FrameRequest{
-				InputPath:  absInput,
-				OutputPath: outPath,
-				Device:     string(deviceVal),
-				ConfigPath: configVal,
-				Canvas:     canvasOpts,
-			})
+			result, err := shotsFrameFn(timeoutCtx, request)
 			if err != nil {
 				return fmt.Errorf("screenshots frame: %w", err)
 			}
@@ -354,11 +387,133 @@ framed screenshots whenever the YAML config or referenced raw assets change.`,
 	}
 }
 
-func frameResumeFingerprint(sourceHash, device, overlayHash string, canvas *screenshots.CanvasOptions) string {
+// frameRenderSettings are the render inputs shared by every framed file in
+// one invocation. Per-file overlays are resolved by canvasFor.
+type frameRenderSettings struct {
+	device          screenshots.FrameDevice
+	frameColor      string
+	base            *screenshots.CanvasOptions
+	overlay         *screenshots.OverlayConfig
+	overlayHash     string
+	fontSet         bool
+	textPositionSet bool
+}
+
+// requireStyledText rejects --font and --text-position when no framed input
+// resolves to title or subtitle text, so the flags never go unused. With
+// --input-dir it is enough for one input to carry text.
+func (settings frameRenderSettings) requireStyledText(hasText bool) error {
+	if hasText || settings.overlay == nil {
+		return nil
+	}
+	switch {
+	case settings.fontSet:
+		return shared.WithDiagnostic(shared.UsageError("--font has no effect: --overlay-config supplies no title or keyword for the framed input"), shared.DiagnosticConflictingInput, "--font")
+	case settings.textPositionSet:
+		return shared.WithDiagnostic(shared.UsageError("--text-position has no effect: --overlay-config supplies no title or keyword for the framed input"), shared.DiagnosticConflictingInput, "--text-position")
+	}
+	return nil
+}
+
+// canvasFor merges the --overlay-config entry matching inputPath under the
+// explicit text flags and validates the resulting text options.
+func (settings frameRenderSettings) canvasFor(inputPath string) (*screenshots.CanvasOptions, error) {
+	var canvasOpts *screenshots.CanvasOptions
+	if settings.base != nil {
+		copied := *settings.base
+		canvasOpts = &copied
+	}
+	if settings.overlay != nil {
+		matched := screenshots.OverlayToCanvas(screenshots.MatchOverlay(*settings.overlay, inputPath))
+		if canvasOpts == nil {
+			canvasOpts = &screenshots.CanvasOptions{}
+		}
+		if canvasOpts.Title == "" {
+			canvasOpts.Title = matched.Title
+		}
+		if canvasOpts.Subtitle == "" {
+			canvasOpts.Subtitle = matched.Subtitle
+		}
+		if canvasOpts.BGColor == "" {
+			canvasOpts.BGColor = matched.BGColor
+		}
+	}
+	if canvasOpts != nil && canvasOpts.TextPosition == "" {
+		canvasOpts.TextPosition = screenshots.TextPositionTop
+	}
+	if canvasOpts != nil && canvasOpts.TitleColor != "" && canvasOpts.Title == "" {
+		fmt.Fprintln(os.Stderr, "Error: --title-color requires --title")
+		return nil, shared.WithDiagnostic(flag.ErrHelp, shared.DiagnosticConflictingInput, "--title-color")
+	}
+	if canvasOpts != nil && canvasOpts.SubtitleColor != "" && canvasOpts.Subtitle == "" {
+		fmt.Fprintln(os.Stderr, "Error: --subtitle-color requires --subtitle")
+		return nil, shared.WithDiagnostic(flag.ErrHelp, shared.DiagnosticConflictingInput, "--subtitle-color")
+	}
+	return canvasOpts, nil
+}
+
+// frameInputOpener snapshots one framed input so hashing and rendering read
+// the same bytes.
+type frameInputOpener func(context.Context) (*screenshots.FrameInputSnapshot, error)
+
+// frameSnapshot renders a protected snapshot of the input opened by open.
+// With a non-nil state it skips the render when state records the same
+// fingerprint and output bytes, and saves state after a successful render;
+// the caller then holds the resume lock and owns state. A non-nil outputRoot
+// is the retained --output-dir the image is published into.
+func frameSnapshot(ctx context.Context, open frameInputOpener, request screenshots.FrameRequest, settings frameRenderSettings, state *screenshots.FrameResumeState, root rootfs.Root, outputRoot *rootfs.Root) (*screenshots.FrameResult, error) {
+	snapshot, err := open(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("snapshot input: %w", err)
+	}
+	finish := func(result *screenshots.FrameResult, primary error) (*screenshots.FrameResult, error) {
+		if closeErr := snapshot.Close(); closeErr != nil {
+			return nil, errors.Join(primary, closeErr)
+		}
+		if primary != nil {
+			return nil, primary
+		}
+		return result, nil
+	}
+	fingerprint := ""
+	if state != nil {
+		fingerprint = frameResumeFingerprint(snapshot.SourceHash(), settings, request.Canvas)
+		if result, ok := screenshots.ResumeEntry(ctx, *state, request.OutputPath, fingerprint); ok {
+			return finish(&result, nil)
+		}
+	}
+	request.InputPath = snapshot.Path()
+	var result *screenshots.FrameResult
+	if outputRoot != nil {
+		result, err = shotsFrameIntoFn(ctx, request, *outputRoot)
+	} else {
+		result, err = shotsFrameFn(ctx, request)
+	}
+	if err != nil {
+		return finish(nil, err)
+	}
+	if state == nil {
+		return finish(result, nil)
+	}
+	stored := *result
+	stored.Skipped = false
+	state.Files[request.OutputPath] = screenshots.FrameResumeEntry{
+		Fingerprint: fingerprint,
+		OutputHash:  result.OutputHash,
+		Result:      stored,
+	}
+	if err := screenshots.SaveFrameResumeState(root, screenshots.FrameResumeStateRel, *state); err != nil {
+		return finish(nil, fmt.Errorf("write resume state: %w", err))
+	}
+	return finish(result, nil)
+}
+
+func frameResumeFingerprint(sourceHash string, settings frameRenderSettings, canvas *screenshots.CanvasOptions) string {
 	fp := screenshots.FrameResumeFingerprint{
 		SourceHash:  sourceHash,
-		Device:      device,
-		OverlayHash: overlayHash,
+		Device:      string(settings.device),
+		OverlayHash: settings.overlayHash,
+		FrameColor:  settings.frameColor,
 	}
 	if canvas != nil {
 		fp.Title = canvas.Title
@@ -366,6 +521,8 @@ func frameResumeFingerprint(sourceHash, device, overlayHash string, canvas *scre
 		fp.TitleColor = canvas.TitleColor
 		fp.SubtitleColor = canvas.SubtitleColor
 		fp.Background = canvas.BGColor
+		fp.Font = canvas.Font
+		fp.TextPosition = string(canvas.TextPosition)
 	}
 	return screenshots.FingerprintFrameResume(fp)
 }

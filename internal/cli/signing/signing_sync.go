@@ -64,10 +64,27 @@ the same verified signing files.
 Native macOS profile types use .provisionprofile paths; iOS and tvOS profile
 types retain .mobileprovision. Existing legacy profile paths remain readable.
 
-Push and pull can keep the same encrypted artifacts in GitLab Secure Files or
-AWS Secrets Manager instead of git. Encryption, path checks, and size limits
-are unchanged; only the transport differs, and the remote stores hold
-ciphertext only. Password rotation remains git-only.
+Push and pull can keep the same encrypted artifacts in GitLab Secure Files,
+AWS Secrets Manager, or S3-compatible object storage instead of git.
+Encryption, path checks, and size limits are unchanged; only
+the transport differs, and the remote stores hold ciphertext only.
+
+Object storage (--storage object) uses the git tree's layout, so a bucket
+prefix and a repository can be mirrored byte for byte. Credentials and, unless
+--object-region is set, the region come from the standard AWS configuration:
+environment variables, shared config or SSO profiles, web identity, or
+container and instance metadata. No flag accepts a credential. Writes are
+conditional: a push never overwrites an object that changed after it was
+fetched and fails instead, so pull and retry. Endpoints that ignore
+If-Match and If-None-Match lose this protection.
+
+Password rotation supports git and object storage.
+
+Push --renew-expired replaces an expired profile with a same-name profile, and
+--force-for-new-devices recreates a development or ad hoc profile when its
+devices differ from the enabled device list. nuke deletes every profile of one
+type, revokes the matching certificates, and removes their encrypted
+artifacts. These lifecycle operations are git-only.
 
 Examples:
   asc signing sync push --bundle-id com.example.app --profile-type IOS_APP_STORE \
@@ -87,13 +104,24 @@ Examples:
     --gitlab-token-file ~/.config/asc/gitlab-token --password-file ~/.config/asc/signing-sync-password
 
   asc signing sync pull --storage aws-secrets-manager --region us-east-1 --prefix asc-signing \
-    --password-file ~/.config/asc/signing-sync-password --output-dir ./signing`,
+    --password-file ~/.config/asc/signing-sync-password --output-dir ./signing
+
+  asc signing sync push --bundle-id com.example.app --profile-type IOS_APP_STORE \
+    --storage object --object-bucket team-certs --object-prefix asc/ \
+    --password-file ~/.config/asc/signing-sync-password
+
+  asc signing sync push --bundle-id com.example.app --profile-type IOS_APP_ADHOC --force-for-new-devices \
+    --repo git@github.com:team/certs.git --password-file ~/.config/asc/signing-sync-password
+
+  asc signing sync nuke --profile-type IOS_APP_DEVELOPMENT --repo git@github.com:team/certs.git \
+    --password-file ~/.config/asc/signing-sync-password --dry-run`,
 		FlagSet:   fs,
 		UsageFunc: shared.DefaultUsageFunc,
 		Subcommands: []*ffcli.Command{
 			syncPushCommand(),
 			syncPullCommand(),
 			syncRotatePasswordCommand(),
+			syncNukeCommand(),
 		},
 		Exec: func(ctx context.Context, args []string) error {
 			return flag.ErrHelp
@@ -186,8 +214,11 @@ func syncPushCommand() *ffcli.Command {
 	passwordFile := fs.String("password-file", "", "Protected file containing the repository encryption password (or set ASC_SIGNING_SYNC_PASSWORD)")
 	branch := fs.String("branch", "main", "Git branch")
 	certType := fs.String("certificate-type", "", "Certificate type filter (optional)")
-	deviceIDs := fs.String("device", "", "Device ID(s), comma-separated (requires --create-missing; required for development profiles)")
+	deviceIDs := fs.String("device", "", "Device ID(s), comma-separated (requires --create-missing, --renew-expired, or --force-for-new-devices; required for development profiles with --create-missing unless --force-for-new-devices is set)")
 	createMissing := fs.Bool("create-missing", false, "Create missing profiles")
+	renewExpired := fs.Bool("renew-expired", false, "When no active profile exists, replace the most recently expired profile of --profile-type with a same-name profile that reuses active certificates (git storage only)")
+	forceForNewDevices := fs.Bool("force-for-new-devices", false, "Recreate a development or ad hoc profile with the same name when its devices differ from --device or the enabled device list (git storage only)")
+	includeMacInProfiles := fs.Bool("include-mac-in-profiles", false, "With --force-for-new-devices, also include enabled Apple silicon Macs in IOS_APP_DEVELOPMENT or IOS_APP_ADHOC profiles")
 	createMissingCertificate := fs.Bool("create-missing-certificate", false, "Create a certificate when none are active, then create the profile")
 	identityPath := fs.String("identity", "", "Protected PKCS#12 signing identity file")
 	privateKeyPath := fs.String("private-key", "", "Protected RSA or EC private key PEM file")
@@ -246,10 +277,13 @@ func syncPushCommand() *ffcli.Command {
 			if err != nil {
 				return err
 			}
-			if err := rejectDeviceWithoutCreateMissing(*deviceIDs, *createMissing); err != nil {
+			if err := validateSigningSyncLifecycleFlags(profType, storageSelection.kind, *deviceIDs, *renewExpired, *forceForNewDevices, *includeMacInProfiles); err != nil {
 				return err
 			}
-			if *createMissing && isDevelopmentProfile(profType) && strings.TrimSpace(*deviceIDs) == "" {
+			if err := rejectDeviceWithoutCreateMissing(*deviceIDs, *createMissing || *renewExpired || *forceForNewDevices); err != nil {
+				return err
+			}
+			if *createMissing && !*forceForNewDevices && isDevelopmentProfile(profType) && strings.TrimSpace(*deviceIDs) == "" {
 				return shared.UsageError("--device is required for development profiles with --create-missing")
 			}
 			identityInput := strings.TrimSpace(*identityPath)
@@ -335,6 +369,7 @@ func syncPushCommand() *ffcli.Command {
 			partialResult := SyncResult{
 				Operation:       "push",
 				RepoURL:         transport.Locator(),
+				Storage:         transport.Storage(),
 				BundleID:        bundle,
 				ProfileType:     profType,
 				Files:           []string{},
@@ -364,6 +399,9 @@ func syncPushCommand() *ffcli.Command {
 					IdentityPassword:         certificatePassword,
 					Identity:                 identity,
 					BundleIDs:                targetBundles,
+					RenewExpired:             *renewExpired,
+					ForceForNewDevices:       *forceForNewDevices,
+					IncludeMacDevices:        *includeMacInProfiles,
 				})
 				if batchErr != nil {
 					if result.Partial {
@@ -402,7 +440,7 @@ func syncPushCommand() *ffcli.Command {
 			progress := &signingAssetsProgress{}
 			profileCreated := false
 			reportPartial := func(primary error) error {
-				if !createdIdentity.CertificateAttempted && createdIdentity.CertificateID == "" && !progress.ProfileCreateAttempted && len(partialResult.Files) == 0 {
+				if !createdIdentity.CertificateAttempted && createdIdentity.CertificateID == "" && !progress.ProfileCreateAttempted && !progress.ReplacementAttempted && len(partialResult.Files) == 0 {
 					return fmt.Errorf("signing sync push: %w", primary)
 				}
 				partialResult.Partial = true
@@ -509,9 +547,13 @@ func syncPushCommand() *ffcli.Command {
 					CreateContext: func() (context.Context, context.CancelFunc) {
 						return shared.ContextWithTimeout(ctx)
 					},
-					CertificateFilter: identityCertificateFilter(identity),
+					CertificateFilter:  identityCertificateFilter(identity),
+					RenewExpired:       *renewExpired,
+					ForceForNewDevices: *forceForNewDevices,
+					IncludeMacDevices:  *includeMacInProfiles,
 				},
 			)
+			partialResult.ProfileLifecycle = progress.Lifecycle
 			if err != nil {
 				return reportPartial(err)
 			}
@@ -529,6 +571,7 @@ func syncPushCommand() *ffcli.Command {
 			if created {
 				fmt.Fprintln(os.Stderr, "Created new profile")
 			}
+			reportSigningProfileLifecycle(bundle, progress.Lifecycle)
 			if identity != nil {
 				if err := validateIdentityForResolvedAssets(identity, profile, certs, bundle, profType, time.Now()); err != nil {
 					return reportPartial(fmt.Errorf("validate signing identity: %w", err))
@@ -611,6 +654,16 @@ func syncPushCommand() *ffcli.Command {
 				sensitiveFiles = append(sensitiveFiles, identityArtifacts.IdentityPath)
 				fmt.Fprintf(os.Stderr, "  Encrypted %s\n", identityArtifacts.IdentityPath)
 				fmt.Fprintf(os.Stderr, "  Encrypted %s\n", identityArtifacts.BindingPath)
+			}
+
+			if replacedID := signingLifecycleReplacedProfileID(progress.Lifecycle); replacedID != "" {
+				removed, removeErr := removeSupersededProfileArtifacts(store, pass, bundle, profType, replacedID, profileRelPath)
+				if removeErr != nil {
+					return reportPartial(fmt.Errorf("remove replaced profile artifacts: %w", removeErr))
+				}
+				for _, path := range removed {
+					fmt.Fprintf(os.Stderr, "  Removed %s\n", path)
+				}
 			}
 
 			// Publish every encrypted artifact through the selected storage.
@@ -749,6 +802,7 @@ func syncPullCommand() *ffcli.Command {
 				result := SyncResult{
 					Operation: "pull",
 					RepoURL:   transport.Locator(),
+					Storage:   transport.Storage(),
 					Files:     []string{},
 				}
 				return shared.PrintOutput(&result, *output.Output, *output.Pretty)
@@ -801,6 +855,7 @@ func syncPullCommand() *ffcli.Command {
 			result := SyncResult{
 				Operation:       "pull",
 				RepoURL:         transport.Locator(),
+				Storage:         transport.Storage(),
 				Files:           files,
 				IdentityPresent: identityPresent,
 				SensitiveFiles:  sensitiveFiles,
