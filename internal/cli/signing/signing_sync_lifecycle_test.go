@@ -631,3 +631,31 @@ func TestResolveSigningAssetsReplacementCreateFailureNamesRecovery(t *testing.T)
 		t.Fatalf("lifecycle = %+v attempted=%t", progress.Lifecycle, progress.ProfileCreateAttempted)
 	}
 }
+
+func TestResolveSigningAssetsReplacementUsesSeparateRequestContexts(t *testing.T) {
+	api := newLifecycleAPI(t)
+	api.bundleProfiles = activeDevelopmentProfile
+	api.profileDevices["profile-old"] = lifecycleDevicesJSON([4]string{"device-1", "UDID1", "IPHONE", "ENABLED"})
+	contexts := 0
+	_, _, created, err := resolveSigningAssets(context.Background(), api.client(), signingAssetsOptions{
+		BundleIDResourceID: "bundle-1",
+		BundleIdentifier:   "com.example.app",
+		ProfileType:        "IOS_APP_DEVELOPMENT",
+		DeviceIDs:          []string{"device-2"},
+		ForceForNewDevices: true,
+		Progress:           &signingAssetsProgress{},
+		CreateContext: func() (context.Context, context.CancelFunc) {
+			contexts++
+			return context.WithCancel(context.Background())
+		},
+	})
+	if err != nil || !created {
+		t.Fatalf("resolveSigningAssets() created=%t error=%v", created, err)
+	}
+	if want := []string{"DELETE /v1/profiles/profile-old", "POST /v1/profiles"}; !reflect.DeepEqual(api.mutations(), want) {
+		t.Fatalf("mutations = %v, want %v", api.mutations(), want)
+	}
+	if contexts != 2 {
+		t.Fatalf("request contexts = %d, want one for the deletion and one for the creation", contexts)
+	}
+}

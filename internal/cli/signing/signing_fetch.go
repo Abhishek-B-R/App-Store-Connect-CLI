@@ -1266,20 +1266,37 @@ func createSigningProfile(
 		}
 	}
 
-	createCtx := ctx
-	cancelCreate := func() {}
-	if options.CreateContext != nil {
-		createCtx, cancelCreate = options.CreateContext()
-		if createCtx == nil {
-			return nil, fmt.Errorf("profile create context is nil")
+	// Each outbound mutation gets its own request context so a slow deletion
+	// cannot exhaust the time left to create the replacement.
+	requestContext := func() (context.Context, context.CancelFunc, error) {
+		if options.CreateContext == nil {
+			return ctx, func() {}, nil
 		}
+		requestCtx, cancel := options.CreateContext()
+		if requestCtx == nil {
+			if cancel != nil {
+				cancel()
+			}
+			return nil, nil, fmt.Errorf("profile create context is nil")
+		}
+		return requestCtx, cancel, nil
 	}
-	defer cancelCreate()
 	if replacement != nil {
-		if err := deleteReplacedProfile(createCtx, client, replacement, options.Progress); err != nil {
+		deleteCtx, cancelDelete, err := requestContext()
+		if err != nil {
+			return nil, err
+		}
+		err = deleteReplacedProfile(deleteCtx, client, replacement, options.Progress)
+		cancelDelete()
+		if err != nil {
 			return nil, err
 		}
 	}
+	createCtx, cancelCreate, err := requestContext()
+	if err != nil {
+		return nil, err
+	}
+	defer cancelCreate()
 	if options.Progress != nil {
 		options.Progress.Certificates = append([]asc.Resource[asc.CertificateAttributes](nil), certificates...)
 		options.Progress.ProfileCreateAttempted = true
