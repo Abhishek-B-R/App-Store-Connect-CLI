@@ -13,6 +13,9 @@ type SigningSyncTargetResult struct {
 	CertificateCreationState string   `json:"certificateCreationState,omitempty"`
 	ProfileCreationState     string   `json:"profileCreationState,omitempty"`
 	Files                    []string `json:"files"`
+	// ProfileLifecycle is set by push with --renew-expired or
+	// --force-for-new-devices when an existing profile was evaluated.
+	ProfileLifecycle *SigningSyncProfileLifecycle `json:"profileLifecycle,omitempty"`
 }
 
 // SigningSyncResult is the structured output for signing sync operations.
@@ -35,7 +38,11 @@ type SigningSyncResult struct {
 	ProfileCreationState     string                    `json:"profileCreationState,omitempty"`
 	PublicationState         string                    `json:"publicationState,omitempty"`
 	Partial                  bool                      `json:"partial,omitempty"`
-	batch                    bool
+	// ProfileLifecycle is set by single-target push with --renew-expired or
+	// --force-for-new-devices when an existing profile was evaluated. Batch
+	// results report it per target.
+	ProfileLifecycle *SigningSyncProfileLifecycle `json:"profileLifecycle,omitempty"`
+	batch            bool
 }
 
 // MarkBatch marks a computed result as the multi-target shape. It is kept out
@@ -54,21 +61,22 @@ func (result SigningSyncResult) MarshalJSON() ([]byte, error) {
 		bundleID = nil
 	}
 	type signingSyncResultJSON struct {
-		Operation                string                    `json:"operation"`
-		RepoURL                  string                    `json:"repoUrl"`
-		BundleID                 *string                   `json:"bundleId,omitempty"`
-		ProfileType              string                    `json:"profileType"`
-		Files                    []string                  `json:"files"`
-		IdentityPresent          bool                      `json:"identityPresent"`
-		IdentitySHA256           string                    `json:"identitySha256,omitempty"`
-		SensitiveFiles           []string                  `json:"sensitiveFiles,omitempty"`
-		BundleIDs                []string                  `json:"bundleIds,omitempty"`
-		Targets                  []SigningSyncTargetResult `json:"targets,omitempty"`
-		CertificateIDs           []string                  `json:"certificateIds,omitempty"`
-		CertificateCreationState string                    `json:"certificateCreationState,omitempty"`
-		ProfileCreationState     string                    `json:"profileCreationState,omitempty"`
-		PublicationState         string                    `json:"publicationState,omitempty"`
-		Partial                  bool                      `json:"partial,omitempty"`
+		Operation                string                       `json:"operation"`
+		RepoURL                  string                       `json:"repoUrl"`
+		BundleID                 *string                      `json:"bundleId,omitempty"`
+		ProfileType              string                       `json:"profileType"`
+		Files                    []string                     `json:"files"`
+		IdentityPresent          bool                         `json:"identityPresent"`
+		IdentitySHA256           string                       `json:"identitySha256,omitempty"`
+		SensitiveFiles           []string                     `json:"sensitiveFiles,omitempty"`
+		BundleIDs                []string                     `json:"bundleIds,omitempty"`
+		Targets                  []SigningSyncTargetResult    `json:"targets,omitempty"`
+		CertificateIDs           []string                     `json:"certificateIds,omitempty"`
+		CertificateCreationState string                       `json:"certificateCreationState,omitempty"`
+		ProfileCreationState     string                       `json:"profileCreationState,omitempty"`
+		PublicationState         string                       `json:"publicationState,omitempty"`
+		Partial                  bool                         `json:"partial,omitempty"`
+		ProfileLifecycle         *SigningSyncProfileLifecycle `json:"profileLifecycle,omitempty"`
 	}
 	return json.Marshal(signingSyncResultJSON{
 		Operation:                result.Operation,
@@ -86,6 +94,7 @@ func (result SigningSyncResult) MarshalJSON() ([]byte, error) {
 		ProfileCreationState:     result.ProfileCreationState,
 		PublicationState:         result.PublicationState,
 		Partial:                  result.Partial,
+		ProfileLifecycle:         result.ProfileLifecycle,
 	})
 }
 

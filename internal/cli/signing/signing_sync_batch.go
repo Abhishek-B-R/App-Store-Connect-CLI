@@ -30,6 +30,9 @@ type signingSyncBatchOptions struct {
 	Identity                 *signingIdentity
 	BundleIDs                []string
 	ContextWithTimeout       func(context.Context) (context.Context, context.CancelFunc)
+	RenewExpired             bool
+	ForceForNewDevices       bool
+	IncludeMacDevices        bool
 }
 
 type signingSyncBatchTarget struct {
@@ -47,6 +50,7 @@ type signingSyncBatchTarget struct {
 	ProfileCreationState     string
 	CertificateAttempted     bool
 	ProfileCreateAttempted   bool
+	ProfileLifecycle         *asc.SigningSyncProfileLifecycle
 }
 
 type signingSyncBatchLegacyFile struct {
@@ -112,6 +116,18 @@ func runSigningSyncBatch(ctx context.Context, client *asc.Client, options signin
 	partial := func(err error, current []signingSyncBatchTarget) (SyncResult, error) {
 		return signingSyncBatchPartialResult(options, bundleIDs, current, identity), signingSyncBatchPublicationError(err, current)
 	}
+	// Every target is compared with the same enabled device set, so it is
+	// listed once before any target is resolved.
+	deviceIDs := options.DeviceIDs
+	if options.ForceForNewDevices && len(deviceIDs) == 0 && isDeviceProfileType(options.ProfileType) {
+		devicesCtx, cancelDevices := contextWithTimeout(ctx)
+		enabled, err := listEnabledProfileDeviceIDs(devicesCtx, client, options.ProfileType, options.IncludeMacDevices)
+		cancelDevices()
+		if err != nil {
+			return partial(err, targets)
+		}
+		deviceIDs = enabled
+	}
 	for _, bundleID := range bundleIDs {
 		requestCtx, cancelRequest := contextWithTimeout(ctx)
 		bundleIDResponse, err := findBundleID(requestCtx, client, bundleID)
@@ -136,7 +152,7 @@ func runSigningSyncBatch(ctx context.Context, client *asc.Client, options signin
 				ProfileType:              options.ProfileType,
 				ProfileName:              profileCreateNameForTarget(options.ProfileType, bundleID, time.Now()),
 				CertificateType:          options.CertificateType,
-				DeviceIDs:                options.DeviceIDs,
+				DeviceIDs:                deviceIDs,
 				CreateMissing:            options.CreateMissing,
 				CreateMissingCertificate: options.CreateMissingCertificate,
 				CertificateCreate:        certificateRequest,
@@ -204,13 +220,16 @@ func runSigningSyncBatch(ctx context.Context, client *asc.Client, options signin
 				CreateContext: func() (context.Context, context.CancelFunc) {
 					return contextWithTimeout(ctx)
 				},
-				CertificateFilter: identityCertificateFilter(identity),
+				CertificateFilter:  identityCertificateFilter(identity),
+				RenewExpired:       options.RenewExpired,
+				ForceForNewDevices: options.ForceForNewDevices,
+				IncludeMacDevices:  options.IncludeMacDevices,
 			},
 		)
 		cancelAssets()
 		if err != nil {
 			candidateTargets := append([]signingSyncBatchTarget(nil), targets...)
-			if createdIdentity.CertificateAttempted || progress.ProfileCreateAttempted {
+			if createdIdentity.CertificateAttempted || progress.ProfileCreateAttempted || progress.ReplacementAttempted {
 				candidate := signingSyncBatchTarget{
 					BundleID:               bundleID,
 					BundleIDResourceID:     bundleIDResponse.Data.ID,
@@ -218,6 +237,7 @@ func runSigningSyncBatch(ctx context.Context, client *asc.Client, options signin
 					Certificates:           append([]asc.Resource[asc.CertificateAttributes](nil), progress.Certificates...),
 					CertificateAttempted:   createdIdentity.CertificateAttempted,
 					ProfileCreateAttempted: progress.ProfileCreateAttempted,
+					ProfileLifecycle:       progress.Lifecycle,
 				}
 				switch {
 				case createdIdentity.CertificateID != "" && createdIdentity.P12Path != "":
@@ -240,6 +260,7 @@ func runSigningSyncBatch(ctx context.Context, client *asc.Client, options signin
 		if created {
 			fmt.Fprintf(os.Stderr, "Created new profile for %s\n", bundleID)
 		}
+		reportSigningProfileLifecycle(bundleID, progress.Lifecycle)
 
 		target := signingSyncBatchTarget{
 			BundleID:             bundleID,
@@ -249,6 +270,7 @@ func runSigningSyncBatch(ctx context.Context, client *asc.Client, options signin
 			Certificates:         certificates.Data,
 			ProfileCreated:       created,
 			CertificateAttempted: createdIdentity.CertificateAttempted,
+			ProfileLifecycle:     progress.Lifecycle,
 		}
 		if createdIdentity.CertificateID != "" && createdIdentity.P12Path != "" {
 			target.CertificateCreationState = "created"
@@ -335,6 +357,20 @@ func runSigningSyncBatch(ctx context.Context, client *asc.Client, options signin
 		fmt.Fprintf(os.Stderr, "  Encrypted %s\n", target.IdentityArtifacts.BindingPath)
 	}
 
+	for _, target := range targets {
+		replacedID := signingLifecycleReplacedProfileID(target.ProfileLifecycle)
+		if replacedID == "" {
+			continue
+		}
+		removed, err := removeSupersededProfileArtifacts(store, options.Password, target.BundleID, target.ProfileType, replacedID, target.ProfilePath)
+		if err != nil {
+			return partial(fmt.Errorf("remove replaced profile artifacts for %s: %w", target.BundleID, err), targets)
+		}
+		for _, path := range removed {
+			fmt.Fprintf(os.Stderr, "  Removed %s\n", path)
+		}
+	}
+
 	commitMessage := fmt.Sprintf("Update signing assets for %s (%d targets)", options.ProfileType, len(targets))
 	if err := transport.Publish(ctx, store, commitMessage); err != nil {
 		return partial(err, targets)
@@ -374,6 +410,7 @@ func runSigningSyncBatch(ctx context.Context, client *asc.Client, options signin
 			CertificateCreationState: target.CertificateCreationState,
 			ProfileCreationState:     target.ProfileCreationState,
 			Files:                    files,
+			ProfileLifecycle:         target.ProfileLifecycle,
 		})
 		result.Files = append(result.Files, files...)
 	}
@@ -410,6 +447,7 @@ func signingSyncBatchPartialResult(options signingSyncBatchOptions, bundleIDs []
 			CertificateCreationState: target.CertificateCreationState,
 			ProfileCreationState:     target.ProfileCreationState,
 			Files:                    files,
+			ProfileLifecycle:         target.ProfileLifecycle,
 		})
 		result.Files = append(result.Files, files...)
 		result.CertificateIDs = append(result.CertificateIDs, extractIDs(target.Certificates)...)
