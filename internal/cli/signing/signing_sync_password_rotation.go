@@ -11,6 +11,7 @@ import (
 
 	"github.com/peterbourgon/ff/v3/ffcli"
 
+	"github.com/rudrankriyam/App-Store-Connect-CLI/internal/asc"
 	"github.com/rudrankriyam/App-Store-Connect-CLI/internal/cli/shared"
 	signingpkg "github.com/rudrankriyam/App-Store-Connect-CLI/internal/signing"
 	modernpkcs12 "software.sslmate.com/src/go-pkcs12"
@@ -134,7 +135,7 @@ Examples:
 				}
 				target = &signingSyncObjectRotationTarget{backend: backend}
 			} else {
-				target = signingSyncGitRotationTarget{repoURL: repo}
+				target = signingSyncGitRotationTarget{repoURL: repo, branch: selectedBranch}
 			}
 
 			tmpDir, err := os.MkdirTemp("", "asc-signing-sync-rotate-*")
@@ -161,6 +162,7 @@ Examples:
 				return shared.PrintOutput(&SyncResult{
 					Operation: "rotate-password",
 					RepoURL:   target.Locator(),
+					Storage:   target.Storage(),
 					Files:     []string{},
 				}, *output.Output, *output.Pretty)
 			}
@@ -194,6 +196,7 @@ Examples:
 			return shared.PrintOutput(&SyncResult{
 				Operation:       "rotate-password",
 				RepoURL:         target.Locator(),
+				Storage:         target.Storage(),
 				Files:           encryptedFiles,
 				IdentityPresent: identityPresent,
 				SensitiveFiles:  sensitiveFiles,
@@ -208,10 +211,12 @@ type signingSyncRotationTarget interface {
 	Fetch(ctx context.Context, store *signingpkg.GitStore) error
 	Publish(ctx context.Context, store *signingpkg.GitStore) error
 	Locator() string
+	Storage() *asc.SigningSyncStorage
 }
 
 type signingSyncGitRotationTarget struct {
 	repoURL string
+	branch  string
 }
 
 func (t signingSyncGitRotationTarget) Fetch(ctx context.Context, store *signingpkg.GitStore) error {
@@ -224,6 +229,10 @@ func (t signingSyncGitRotationTarget) Publish(ctx context.Context, store *signin
 }
 
 func (t signingSyncGitRotationTarget) Locator() string { return sanitizeRepoURLForOutput(t.repoURL) }
+
+func (t signingSyncGitRotationTarget) Storage() *asc.SigningSyncStorage {
+	return gitSigningSyncStorage(t.repoURL, t.branch)
+}
 
 // signingSyncObjectRotationTarget keeps the fetched ciphertext so a failed
 // swap can restore the artifacts that were already replaced.
@@ -264,6 +273,10 @@ func (t *signingSyncObjectRotationTarget) Publish(ctx context.Context, store *si
 }
 
 func (t *signingSyncObjectRotationTarget) Locator() string { return t.backend.Locator() }
+
+func (t *signingSyncObjectRotationTarget) Storage() *asc.SigningSyncStorage {
+	return &asc.SigningSyncStorage{Kind: signingSyncStorageObject, Location: t.backend.Locator()}
+}
 
 func readSigningSyncRotationPasswords(currentPath, newPath string) (string, string, error) {
 	currentInfo, err := os.Stat(currentPath)

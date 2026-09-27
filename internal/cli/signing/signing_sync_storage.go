@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/rudrankriyam/App-Store-Connect-CLI/internal/asc"
 	"github.com/rudrankriyam/App-Store-Connect-CLI/internal/cli/shared"
 	signingpkg "github.com/rudrankriyam/App-Store-Connect-CLI/internal/signing"
 )
@@ -247,6 +248,7 @@ type signingSyncTransport interface {
 	Publish(ctx context.Context, store *signingpkg.GitStore, message string) error
 	Locator() string
 	Kind() string
+	Storage() *asc.SigningSyncStorage
 }
 
 // transport resolves the selection into a usable backend. It is the first step
@@ -318,6 +320,16 @@ func (t signingSyncGitTransport) Locator() string { return sanitizeRepoURLForOut
 
 func (t signingSyncGitTransport) Kind() string { return signingSyncStorageGit }
 
+func (t signingSyncGitTransport) Storage() *asc.SigningSyncStorage {
+	return gitSigningSyncStorage(t.repoURL, t.branch)
+}
+
+// gitSigningSyncStorage describes git storage with the same redacted locator
+// that repoUrl reports.
+func gitSigningSyncStorage(repoURL, branch string) *asc.SigningSyncStorage {
+	return &asc.SigningSyncStorage{Kind: signingSyncStorageGit, Location: sanitizeRepoURLForOutput(repoURL), Branch: branch}
+}
+
 // signingSyncRemoteBackend transports already-encrypted artifacts to and from
 // a remote store.
 type signingSyncRemoteBackend interface {
@@ -345,6 +357,10 @@ func (t signingSyncRemoteTransport) Publish(ctx context.Context, store *signingp
 func (t signingSyncRemoteTransport) Locator() string { return t.backend.Locator() }
 
 func (t signingSyncRemoteTransport) Kind() string { return t.kind }
+
+func (t signingSyncRemoteTransport) Storage() *asc.SigningSyncStorage {
+	return &asc.SigningSyncStorage{Kind: t.kind, Location: t.backend.Locator()}
+}
 
 // newSigningSyncStore creates the local ciphertext working tree for a
 // transport. Only git storage uses the repository URL and branch.

@@ -209,6 +209,9 @@ func TestSigningSyncPullFromObjectStorageWritesDecryptedFiles(t *testing.T) {
 	if result.Operation != "pull" || result.RepoURL != "s3://team-certs/asc" || len(result.Files) != 1 {
 		t.Fatalf("result = %#v", result)
 	}
+	if !strings.Contains(stdout, `"storage":{"kind":"object","location":"s3://team-certs/asc"}`) {
+		t.Fatalf("stdout = %s, want the object storage receipt", stdout)
+	}
 	written, err := os.ReadFile(filepath.Join(outputDir, "certs", "distribution", "serial.cer"))
 	if err != nil || !bytes.Equal(written, certificate) {
 		t.Fatalf("decrypted output = %q, %v", written, err)
@@ -309,6 +312,9 @@ func TestSigningSyncRotatePasswordReencryptsObjectStorage(t *testing.T) {
 	if result.Operation != "rotate-password" || result.RepoURL != "s3://team-certs/asc" || !result.IdentityPresent || len(result.Files) != len(liveKeys) {
 		t.Fatalf("result = %#v", result)
 	}
+	if result.Storage == nil || *result.Storage != (asc.SigningSyncStorage{Kind: "object", Location: "s3://team-certs/asc"}) {
+		t.Fatalf("rotation storage = %#v", result.Storage)
+	}
 	if keys := fake.Keys(); strings.Join(keys, ",") != strings.Join(liveKeys, ",") {
 		t.Fatalf("keys after rotation = %v, want only %v", keys, liveKeys)
 	}
@@ -381,5 +387,82 @@ func TestSigningSyncRotatePasswordObjectStorageConflictExitsOperationally(t *tes
 		if !bytes.Equal(stored, before[key]) {
 			t.Fatalf("%s changed although the rotation aborted", key)
 		}
+	}
+}
+
+func TestSigningSyncReceiptPinsStorageForEveryBackend(t *testing.T) {
+	fake := newSigningObjectTestServer(t)
+	gitLab, err := signingpkg.NewGitLabSecureFilesStore(signingpkg.GitLabSecureFilesOptions{
+		ProjectID: "42",
+		Prefix:    "asc-signing",
+		Token:     "glpat-token-value",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	awsTransport, err := signingSyncStorageSelection{kind: signingSyncStorageAWS, prefix: "asc-signing", region: "us-east-1"}.transport(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	objectTransport, err := signingSyncStorageSelection{
+		kind:   signingSyncStorageObject,
+		object: signingpkg.ObjectStorageOptions{Bucket: fake.Bucket, Prefix: "asc/", Endpoint: fake.HTTP.URL, Region: "us-east-1"},
+	}.transport(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name      string
+		transport signingSyncTransport
+		want      string
+	}{
+		{
+			name:      "git",
+			transport: signingSyncGitTransport{repoURL: "https://token:secret@example.com/team/certs.git", branch: "release"},
+			want:      `{"operation":"pull","repoUrl":"https://%5BREDACTED%5D@example.com/team/certs.git","storage":{"kind":"git","location":"https://%5BREDACTED%5D@example.com/team/certs.git","branch":"release"},"bundleId":"","profileType":"","files":[],"identityPresent":false}`,
+		},
+		{
+			name:      "gitlab-secure-files",
+			transport: signingSyncRemoteTransport{kind: signingSyncStorageGitLab, label: "GitLab Secure Files", backend: gitLab},
+			want:      `{"operation":"pull","repoUrl":"gitlab-secure-files://gitlab.com/projects/42/asc-signing","storage":{"kind":"gitlab-secure-files","location":"gitlab-secure-files://gitlab.com/projects/42/asc-signing"},"bundleId":"","profileType":"","files":[],"identityPresent":false}`,
+		},
+		{
+			name:      "aws-secrets-manager",
+			transport: awsTransport,
+			want:      `{"operation":"pull","repoUrl":"aws-secrets-manager://us-east-1/asc-signing","storage":{"kind":"aws-secrets-manager","location":"aws-secrets-manager://us-east-1/asc-signing"},"bundleId":"","profileType":"","files":[],"identityPresent":false}`,
+		},
+		{
+			name:      "object",
+			transport: objectTransport,
+			want:      `{"operation":"pull","repoUrl":"s3://team-certs/asc","storage":{"kind":"object","location":"s3://team-certs/asc"},"bundleId":"","profileType":"","files":[],"identityPresent":false}`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			data, err := json.Marshal(&SyncResult{
+				Operation: "pull",
+				RepoURL:   tt.transport.Locator(),
+				Storage:   tt.transport.Storage(),
+				Files:     []string{},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(data) != tt.want {
+				t.Fatalf("receipt = %s\nwant      %s", data, tt.want)
+			}
+		})
+	}
+}
+
+func TestSigningSyncBatchPartialResultDescribesDefaultGitStorage(t *testing.T) {
+	result := signingSyncBatchPartialResult(signingSyncBatchOptions{
+		RepoURL: "https://token:secret@example.com/team/certs.git",
+		Branch:  "main",
+	}, []string{"com.example.app"}, nil, nil)
+	want := asc.SigningSyncStorage{Kind: "git", Location: "https://%5BREDACTED%5D@example.com/team/certs.git", Branch: "main"}
+	if result.Storage == nil || *result.Storage != want || result.RepoURL != want.Location {
+		t.Fatalf("partial result repoUrl=%q storage=%#v, want %#v", result.RepoURL, result.Storage, want)
 	}
 }

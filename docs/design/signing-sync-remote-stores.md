@@ -234,13 +234,27 @@ provider messages and credential-process output.
 
 ## Output and exit codes
 
-Structured output keeps its existing shape. `repoUrl` carries the redacted git
+Every existing field keeps its meaning. `repoUrl` carries the redacted git
 remote for git storage and a non-secret locator for remote storage
 (`gitlab-secure-files://host/projects/<id>/<prefix>`,
 `aws-secrets-manager://<region>/<prefix>`, or `s3://<bucket>/<prefix>`). The
-object storage locator omits any custom endpoint host. Data goes to stdout and progress to
-stderr. Invalid flag combinations use exit code 2 and operational failures use
-exit code 1.
+object storage locator omits any custom endpoint host.
+
+Push, pull, and rotate-password receipts also include an additive `storage`
+object for every backend. `kind` is the `--storage` value, and `location` is
+the same locator as `repoUrl`. For git storage only, `branch` names the branch:
+
+```json
+{"operation":"pull","repoUrl":"s3://team-certs/asc","storage":{"kind":"object","location":"s3://team-certs/asc"},"bundleId":"","profileType":"","files":[],"identityPresent":false}
+{"operation":"pull","repoUrl":"git@github.com:team/certs.git","storage":{"kind":"git","location":"git@github.com:team/certs.git","branch":"main"},"bundleId":"","profileType":"","files":[],"identityPresent":false}
+```
+
+The receipt has no version identifier. A push or rotation writes many objects,
+secrets, or files, each with its own version, and the Git commit is not
+reported today, so no single value would identify the stored state.
+
+Data goes to stdout and progress to stderr. Invalid flag combinations use exit
+code 2 and operational failures use exit code 1.
 
 ## Tests
 

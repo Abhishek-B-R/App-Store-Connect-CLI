@@ -350,6 +350,7 @@ func syncPushCommand() *ffcli.Command {
 			partialResult := SyncResult{
 				Operation:       "push",
 				RepoURL:         transport.Locator(),
+				Storage:         transport.Storage(),
 				BundleID:        bundle,
 				ProfileType:     profType,
 				Files:           []string{},
@@ -764,6 +765,7 @@ func syncPullCommand() *ffcli.Command {
 				result := SyncResult{
 					Operation: "pull",
 					RepoURL:   transport.Locator(),
+					Storage:   transport.Storage(),
 					Files:     []string{},
 				}
 				return shared.PrintOutput(&result, *output.Output, *output.Pretty)
@@ -816,6 +818,7 @@ func syncPullCommand() *ffcli.Command {
 			result := SyncResult{
 				Operation:       "pull",
 				RepoURL:         transport.Locator(),
+				Storage:         transport.Storage(),
 				Files:           files,
 				IdentityPresent: identityPresent,
 				SensitiveFiles:  sensitiveFiles,
