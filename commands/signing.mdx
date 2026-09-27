@@ -550,7 +550,9 @@ and follow your team's history-retention procedure.
 
 Renewal and device refresh require `--storage git`, and `sync nuke` works only
 with a Git repository, so each replaced or removed encrypted artifact leaves
-the repository in one reviewed commit.
+the repository in one reviewed commit. A multi-target push resolves and checks
+every target before it replaces any profile, and it cannot create a
+certificate in the same run.
 
 `push --renew-expired` applies only when no active profile of `--profile-type`
 exists. It deletes the most recently expired profile, creates a same-name

@@ -25,6 +25,13 @@ type lifecycleProfileState struct {
 	profile    string
 	expiration string
 	devices    []string
+	// noCertificates makes the team certificate list empty.
+	noCertificates bool
+	// otherBundle, when set, is a second registered bundle ID. It has no
+	// profiles unless otherProfileCurrent gives it an active profile whose
+	// devices already match the enabled device list.
+	otherBundle         string
+	otherProfileCurrent bool
 }
 
 func lifecycleStateAPI(t *testing.T, state *lifecycleProfileState, enabledDevices []string, events *[]string) *asc.Client {
@@ -33,6 +40,20 @@ func lifecycleStateAPI(t *testing.T, state *lifecycleProfileState, enabledDevice
 	return newSigningFetchTestClient(t, func(req *http.Request) *http.Response {
 		*events = append(*events, req.Method+" "+req.URL.Path)
 		switch {
+		case req.Method == http.MethodGet && req.URL.Path == "/v1/bundleIds" && state.otherBundle != "" && req.URL.Query().Get("filter[identifier]") == state.otherBundle:
+			return signingFetchJSONResponse(http.StatusOK, fmt.Sprintf(`{"data":[{"type":"bundleIds","id":"bundle-2","attributes":{"identifier":%q}}]}`, state.otherBundle))
+		case req.Method == http.MethodGet && req.URL.Path == "/v1/bundleIds/bundle-2/profiles":
+			if !state.otherProfileCurrent {
+				return signingFetchJSONResponse(http.StatusOK, `{"data":[]}`)
+			}
+			return signingFetchJSONResponse(http.StatusOK, fmt.Sprintf(`{"data":[{"type":"profiles","id":"profile-other","attributes":{"name":"Other","profileType":%q,"profileState":"ACTIVE","expirationDate":"2100-01-01T00:00:00Z","profileContent":%q}}]}`,
+				state.profile, base64.StdEncoding.EncodeToString([]byte("profile-profile-other"))))
+		case req.Method == http.MethodGet && req.URL.Path == "/v1/profiles/profile-other/devices":
+			items := make([]string, 0, len(enabledDevices))
+			for _, id := range enabledDevices {
+				items = append(items, fmt.Sprintf(`{"type":"devices","id":%q,"attributes":{"deviceClass":"IPHONE","status":"ENABLED"}}`, id))
+			}
+			return signingFetchJSONResponse(http.StatusOK, `{"data":[`+strings.Join(items, ",")+`]}`)
 		case req.Method == http.MethodGet && req.URL.Path == "/v1/bundleIds":
 			return signingFetchJSONResponse(http.StatusOK, `{"data":[{"type":"bundleIds","id":"bundle-1","attributes":{"identifier":"com.example.app"}}]}`)
 		case req.Method == http.MethodGet && req.URL.Path == "/v1/bundleIds/bundle-1/profiles":
@@ -41,6 +62,8 @@ func lifecycleStateAPI(t *testing.T, state *lifecycleProfileState, enabledDevice
 			}
 			return signingFetchJSONResponse(http.StatusOK, fmt.Sprintf(`{"data":[{"type":"profiles","id":%q,"attributes":{"name":%q,"profileType":%q,"profileState":"ACTIVE","expirationDate":%q,"profileContent":%q}}]}`,
 				state.id, state.name, state.profile, state.expiration, base64.StdEncoding.EncodeToString([]byte("profile-"+state.id))))
+		case req.Method == http.MethodGet && req.URL.Path == "/v1/certificates" && state.noCertificates:
+			return signingFetchJSONResponse(http.StatusOK, `{"data":[]}`)
 		case req.Method == http.MethodGet && strings.HasSuffix(req.URL.Path, "/certificates"):
 			return signingFetchJSONResponse(http.StatusOK, fmt.Sprintf(`{"data":[{"type":"certificates","id":"cert-1","attributes":{"serialNumber":"serial-1","certificateType":"IOS_DISTRIBUTION","activated":true,"expirationDate":"2100-01-01T00:00:00Z","certificateContent":%q}}]}`, certificate))
 		case req.Method == http.MethodGet && strings.HasSuffix(req.URL.Path, "/devices") && strings.HasPrefix(req.URL.Path, "/v1/profiles/"):
@@ -233,5 +256,134 @@ func assertStoredProfileResource(t *testing.T, remotePath, profilePath, wantID s
 	}
 	if metadata.ProfileResourceID != wantID {
 		t.Fatalf("stored profile resource = %q, want %q", metadata.ProfileResourceID, wantID)
+	}
+}
+
+func TestRunSigningSyncBatchLifecyclePreflightsEveryTargetBeforeReplacing(t *testing.T) {
+	remoteURL, remotePath := newSigningSyncBareRemote(t)
+	state := &lifecycleProfileState{id: "profile-old", name: "Ad Hoc", profile: "IOS_APP_ADHOC", expiration: "2100-01-01T00:00:00Z", devices: []string{"device-1"}}
+	var events []string
+	client := lifecycleStateAPI(t, state, []string{"device-2", "device-1"}, &events)
+	options := signingSyncBatchOptions{
+		RepoURL:     remoteURL,
+		Password:    "repository-password",
+		ProfileType: "IOS_APP_ADHOC",
+		BundleIDs:   []string{"com.example.app"},
+	}
+	var err error
+	_, _ = captureOutput(t, func() { _, err = runSigningSyncBatch(context.Background(), client, options) })
+	if err != nil {
+		t.Fatalf("seed batch: %v", err)
+	}
+	headBefore := strings.TrimSpace(gitOutput(t, remotePath, "rev-parse", "main"))
+
+	// The first target needs a device refresh; the second cannot be resolved.
+	options.BundleIDs = []string{"com.example.missing", "com.example.app"}
+	options.ForceForNewDevices = true
+	events = nil
+	_, _ = captureOutput(t, func() { _, err = runSigningSyncBatch(context.Background(), client, options) })
+	if err == nil || !strings.Contains(err.Error(), "com.example.missing") {
+		t.Fatalf("error = %v, want the unresolved target", err)
+	}
+	if got := mutationEvents(events); len(got) != 0 {
+		t.Fatalf("mutations = %v, want none when a later target fails preflight", got)
+	}
+	if state.id != "profile-old" {
+		t.Fatalf("profile replaced before every target was preflighted: %+v", state)
+	}
+	if got := strings.TrimSpace(gitOutput(t, remotePath, "rev-parse", "main")); got != headBefore {
+		t.Fatalf("remote moved from %s to %s", headBefore, got)
+	}
+}
+
+func TestRunSigningSyncBatchLifecycleRejectsCertificateCreationBeforeMutating(t *testing.T) {
+	remoteURL, remotePath := newSigningSyncBareRemote(t)
+	state := &lifecycleProfileState{id: "profile-old", name: "Store", profile: "IOS_APP_STORE", expiration: "2100-01-01T00:00:00Z"}
+	var events []string
+	client := lifecycleStateAPI(t, state, nil, &events)
+	options := signingSyncBatchOptions{
+		RepoURL:     remoteURL,
+		Password:    "repository-password",
+		ProfileType: "IOS_APP_STORE",
+		BundleIDs:   []string{"com.example.app"},
+	}
+	var err error
+	_, _ = captureOutput(t, func() { _, err = runSigningSyncBatch(context.Background(), client, options) })
+	if err != nil {
+		t.Fatalf("seed batch: %v", err)
+	}
+	headBefore := strings.TrimSpace(gitOutput(t, remotePath, "rev-parse", "main"))
+
+	state.expiration = "2000-01-01T00:00:00Z"
+	state.noCertificates = true
+	state.otherBundle = "com.example.other"
+	options.BundleIDs = []string{"com.example.app", "com.example.other"}
+	options.RenewExpired = true
+	options.CreateMissing = true
+	options.CreateMissingCertificate = true
+	options.IdentityPassword = []byte("identity-password")
+	events = nil
+	_, _ = captureOutput(t, func() { _, err = runSigningSyncBatch(context.Background(), client, options) })
+	if err == nil || !strings.Contains(err.Error(), "cannot create a certificate; create it with a single-target push first") {
+		t.Fatalf("error = %v, want the certificate-creation refusal", err)
+	}
+	if got := mutationEvents(events); len(got) != 0 {
+		t.Fatalf("mutations = %v, want none", got)
+	}
+	if got := strings.TrimSpace(gitOutput(t, remotePath, "rev-parse", "main")); got != headBefore {
+		t.Fatalf("remote moved from %s to %s", headBefore, got)
+	}
+}
+
+func TestRunSigningSyncBatchLifecyclePreflightsUnchangedTargetArtifactsBeforeReplacing(t *testing.T) {
+	remoteURL, remotePath := newSigningSyncBareRemote(t)
+	state := &lifecycleProfileState{id: "profile-old", name: "Ad Hoc", profile: "IOS_APP_ADHOC", expiration: "2100-01-01T00:00:00Z", devices: []string{"device-1"}}
+	var events []string
+	client := lifecycleStateAPI(t, state, []string{"device-2", "device-1"}, &events)
+	options := signingSyncBatchOptions{
+		RepoURL:     remoteURL,
+		Password:    "repository-password",
+		ProfileType: "IOS_APP_ADHOC",
+		BundleIDs:   []string{"com.example.app"},
+	}
+	var err error
+	_, _ = captureOutput(t, func() { _, err = runSigningSyncBatch(context.Background(), client, options) })
+	if err != nil {
+		t.Fatalf("seed batch: %v", err)
+	}
+
+	// The unchanged target's destination holds an artifact the repository
+	// password cannot authenticate, so its publication preflight fails.
+	seed := &signingpkg.GitStore{RepoURL: remoteURL, LocalDir: filepath.Join(t.TempDir(), "seed"), Branch: "main"}
+	t.Cleanup(func() { _ = seed.Cleanup() })
+	if err := seed.Clone(context.Background(), false); err != nil {
+		t.Fatalf("clone: %v", err)
+	}
+	otherPath := signingSyncBatchProfilePath("com.example.other", "IOS_APP_ADHOC", "profile-other")
+	if err := seed.WriteEncryptedFile(otherPath, []byte("foreign"), "another-password"); err != nil {
+		t.Fatalf("write foreign artifact: %v", err)
+	}
+	if err := seed.CommitAndPush(context.Background(), "foreign artifact"); err != nil {
+		t.Fatalf("push foreign artifact: %v", err)
+	}
+	headBefore := strings.TrimSpace(gitOutput(t, remotePath, "rev-parse", "main"))
+
+	state.otherBundle = "com.example.other"
+	state.otherProfileCurrent = true
+	options.BundleIDs = []string{"com.example.app", "com.example.other"}
+	options.ForceForNewDevices = true
+	events = nil
+	_, _ = captureOutput(t, func() { _, err = runSigningSyncBatch(context.Background(), client, options) })
+	if err == nil || !strings.Contains(err.Error(), filepath.ToSlash(otherPath)) {
+		t.Fatalf("error = %v, want the unchanged target's preflight failure", err)
+	}
+	if got := mutationEvents(events); len(got) != 0 {
+		t.Fatalf("mutations = %v, want none", got)
+	}
+	if state.id != "profile-old" {
+		t.Fatalf("profile replaced before the unchanged target was preflighted: %+v", state)
+	}
+	if got := strings.TrimSpace(gitOutput(t, remotePath, "rev-parse", "main")); got != headBefore {
+		t.Fatalf("remote moved from %s to %s", headBefore, got)
 	}
 }
