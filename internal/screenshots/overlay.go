@@ -20,6 +20,13 @@ type OverlayEntry struct {
 	Title      string `json:"title,omitempty"`
 	Keyword    string `json:"keyword,omitempty"`
 	Background string `json:"background,omitempty"`
+
+	// Text box keys mirror --text-box, --text-box-color, --text-box-padding,
+	// and --text-box-radius for the inputs this entry matches.
+	TextBox        bool   `json:"textBox,omitempty"`
+	TextBoxColor   string `json:"textBoxColor,omitempty"`
+	TextBoxPadding *int   `json:"textBoxPadding,omitempty"`
+	TextBoxRadius  *int   `json:"textBoxRadius,omitempty"`
 }
 
 // OverlayConfig is the --overlay-config schema.

@@ -106,6 +106,8 @@ type FrameResumeFingerprint struct {
 	FrameColor    string
 	Font          string
 	TextPosition  string
+	TextBox       string // TextBoxOptions settings; empty when no box is drawn
+	FontFileHash  string // SHA-256 of a --font file; empty for a family name
 }
 
 // FingerprintFrameResume hashes every input that changes the framed image.
@@ -116,7 +118,7 @@ const (
 )
 
 func FingerprintFrameResume(fp FrameResumeFingerprint) string {
-	sum := sha256.Sum256([]byte(strings.Join([]string{
+	fields := []string{
 		frameResumeSchema,
 		pinnedKoubouVersion,
 		fp.SourceHash,
@@ -130,7 +132,13 @@ func FingerprintFrameResume(fp FrameResumeFingerprint) string {
 		fp.FrameColor,
 		fp.Font,
 		fp.TextPosition,
-	}, "\x00")))
+	}
+	// Append the text box and font file only when used, so existing resume
+	// state for renders without them keeps matching.
+	if fp.TextBox != "" || fp.FontFileHash != "" {
+		fields = append(fields, "textBox="+fp.TextBox, "fontFile="+fp.FontFileHash)
+	}
+	sum := sha256.Sum256([]byte(strings.Join(fields, "\x00")))
 	return hex.EncodeToString(sum[:])
 }
 
