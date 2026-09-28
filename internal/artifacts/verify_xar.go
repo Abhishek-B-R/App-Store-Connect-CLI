@@ -69,7 +69,7 @@ func verifyXarSignature(source io.ReaderAt, size int64, document *xarDocument, s
 	if err != nil {
 		return failedVerification(err)
 	}
-	chain := policy.evaluateChain(leaf, carried)
+	chain := policy.evaluateChain(leaf, carried, purposeInstaller)
 	if chain.Status != VerificationValid {
 		chain.Detail = "table of contents checksum and RSA signature verified, but " + chain.Detail
 		return chain

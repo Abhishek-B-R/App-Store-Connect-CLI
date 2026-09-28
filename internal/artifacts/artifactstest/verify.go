@@ -23,7 +23,7 @@ import (
 )
 
 // TrustChain is a throwaway root, intermediate, and RSA leaf. The leaf carries
-// a critical Apple code-signing marker extension, like real Apple leaves.
+// Apple certificate-type markers, like real Apple leaves.
 type TrustChain struct {
 	Root         *x509.Certificate
 	Intermediate *x509.Certificate
@@ -31,10 +31,52 @@ type TrustChain struct {
 	LeafKey      *rsa.PrivateKey
 }
 
-var oidAppleDistributionMarker = asn1.ObjectIdentifier{1, 2, 840, 113635, 100, 6, 1, 4}
+// LeafType describes the Apple markers and extended key usages a synthetic
+// leaf carries. The predefined values mirror real Apple leaves; see
+// docs/API_NOTES.md for the evidence behind each marker.
+type LeafType struct {
+	Name        string
+	Markers     []asn1.ObjectIdentifier
+	ExtKeyUsage []x509.ExtKeyUsage
+	AppleEKU    []asn1.ObjectIdentifier
+}
 
-// NewTrustChain issues a chain whose leaf is valid from notBefore to notAfter.
+func appleOID(arc ...int) asn1.ObjectIdentifier {
+	return append(asn1.ObjectIdentifier{1, 2, 840, 113635, 100}, arc...)
+}
+
+var codeSigningEKU = []x509.ExtKeyUsage{x509.ExtKeyUsageCodeSigning}
+
+// Code-signing leaf types.
+var (
+	AppleDevelopmentLeaf       = LeafType{Name: "Apple Development", Markers: []asn1.ObjectIdentifier{appleOID(6, 1, 2), appleOID(6, 1, 12)}, ExtKeyUsage: codeSigningEKU}
+	AppleDistributionLeaf      = LeafType{Name: "Apple Distribution", Markers: []asn1.ObjectIdentifier{appleOID(6, 1, 4), appleOID(6, 1, 7)}, ExtKeyUsage: codeSigningEKU}
+	IPhoneDeveloperLeaf        = LeafType{Name: "iPhone Developer", Markers: []asn1.ObjectIdentifier{appleOID(6, 1, 2)}, ExtKeyUsage: codeSigningEKU}
+	IPhoneDistributionLeaf     = LeafType{Name: "iPhone Distribution", Markers: []asn1.ObjectIdentifier{appleOID(6, 1, 4)}, ExtKeyUsage: codeSigningEKU}
+	MacAppDistributionLeaf     = LeafType{Name: "Mac App Distribution", Markers: []asn1.ObjectIdentifier{appleOID(6, 1, 7)}, ExtKeyUsage: codeSigningEKU}
+	MacDevelopmentLeaf         = LeafType{Name: "Mac Development", Markers: []asn1.ObjectIdentifier{appleOID(6, 1, 12)}, ExtKeyUsage: codeSigningEKU}
+	DeveloperIDApplicationLeaf = LeafType{Name: "Developer ID Application", Markers: []asn1.ObjectIdentifier{appleOID(6, 1, 13)}, ExtKeyUsage: codeSigningEKU}
+	MacAppStoreSigningLeaf     = LeafType{Name: "Mac App Store application signing", Markers: []asn1.ObjectIdentifier{appleOID(6, 1, 9)}, ExtKeyUsage: codeSigningEKU}
+	AppleSoftwareSigningLeaf   = LeafType{Name: "Apple software signing", Markers: []asn1.ObjectIdentifier{appleOID(6, 22)}, ExtKeyUsage: codeSigningEKU}
+)
+
+// Installer leaf types.
+var (
+	DeveloperIDInstallerLeaf       = LeafType{Name: "Developer ID Installer", Markers: []asn1.ObjectIdentifier{appleOID(6, 1, 14)}, AppleEKU: []asn1.ObjectIdentifier{appleOID(4, 13)}}
+	MacInstallerDistributionLeaf   = LeafType{Name: "Mac Installer Distribution", Markers: []asn1.ObjectIdentifier{appleOID(6, 1, 8)}, AppleEKU: []asn1.ObjectIdentifier{appleOID(4, 9)}}
+	AppleSoftwareUpdateSigningLeaf = LeafType{Name: "Apple Software Update signing", Markers: []asn1.ObjectIdentifier{appleOID(6, 1, 29, 2)}, AppleEKU: []asn1.ObjectIdentifier{appleOID(4, 1)}}
+)
+
+// NewTrustChain issues a chain with an Apple Distribution leaf valid from
+// notBefore to notAfter.
 func NewTrustChain(t testing.TB, notBefore, notAfter time.Time) TrustChain {
+	t.Helper()
+	return NewTrustChainWithLeaf(t, AppleDistributionLeaf, notBefore, notAfter)
+}
+
+// NewTrustChainWithLeaf issues a chain whose leaf has the given type and is
+// valid from notBefore to notAfter.
+func NewTrustChainWithLeaf(t testing.TB, leafType LeafType, notBefore, notAfter time.Time) TrustChain {
 	t.Helper()
 	rootKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -60,13 +102,19 @@ func NewTrustChain(t testing.TB, notBefore, notAfter time.Time) TrustChain {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Real Apple leaves mark some type markers critical.
+	extensions := make([]pkix.Extension, 0, len(leafType.Markers))
+	for _, marker := range leafType.Markers {
+		extensions = append(extensions, pkix.Extension{Id: marker, Critical: true, Value: []byte{0x05, 0x00}})
+	}
 	leaf := createCertificate(t, &x509.Certificate{
 		SerialNumber: big.NewInt(3),
 		Subject:      pkix.Name{CommonName: SignerCommonName, OrganizationalUnit: []string{TeamID}, Organization: []string{"Example Corp"}},
 		NotBefore:    notBefore, NotAfter: notAfter,
-		KeyUsage:        x509.KeyUsageDigitalSignature,
-		ExtKeyUsage:     []x509.ExtKeyUsage{x509.ExtKeyUsageCodeSigning},
-		ExtraExtensions: []pkix.Extension{{Id: oidAppleDistributionMarker, Critical: true, Value: []byte{0x05, 0x00}}},
+		KeyUsage:           x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:        leafType.ExtKeyUsage,
+		UnknownExtKeyUsage: leafType.AppleEKU,
+		ExtraExtensions:    extensions,
 	}, intermediate, &leafKey.PublicKey, intermediateKey)
 	return TrustChain{Root: root, Intermediate: intermediate, Leaf: leaf, LeafKey: leafKey}
 }

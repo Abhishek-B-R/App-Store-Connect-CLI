@@ -671,3 +671,28 @@ Observed 2026-09-02 against a live App Store Connect team. The CLI does not add 
 - The deprecated `asc ads v5 reports preset` warning follows `--level`: campaigns, ad groups, ads, keywords, and search terms point to their matching `asc ads reports apps` command; the two ad-group-specific keyword levels point to v1's consolidated `keywords` or `search-terms` report.
 
 Transaction Tax archive streaming uses a bounded workflow context instead of inheriting the web client's shorter per-request timeout. Lower-level callers without a context deadline retain the configured client timeout. Caller cancellation still bounds the download, and the shared client timeout remains unchanged.
+
+## Offline signature verification: Apple leaf certificate types
+
+`asc ipa-info --verify-signature` accepts only code-signing leaves and `asc pkg-info --verify-signature` accepts only installer leaves (`internal/artifacts/verify_leaf.go`). A leaf is typed by the Apple extensions it carries and must also carry the matching extended key usage (EKU). Any other leaf, including one whose type is not recognized or one carrying both code-signing and installer markers, reports `untrusted-chain`. The table was built on 2026-09-28 from public certificates on a macOS 27 host: login keychain certificates (`security find-certificate -a -p`), `DeveloperCertificates` in local provisioning profiles, leaves extracted with `codesign -d --extract-certificates` from signed apps and IPAs, and leaves read from the `X509Certificate` elements of flat-package tables of contents (`xar --dump-toc`). Apple's device-management article "Allowing and denying apps and binaries" confirms 6.1.9 (App Store), 6.1.13 (Developer ID), 6.1.4, and 6.1.12 (development). Apple's WWDR and Developer ID CPS pages were not machine-readable at the time.
+
+| Type | Apple markers (`1.2.840.113635.100.…`) | EKU | Artifact | Evidence |
+|------|------|-----|----------|----------|
+| Apple Development | `6.1.2` + `6.1.12` | codeSigning | IPA / Mach-O | keychain; 22 provisioning-profile certificates |
+| Apple Distribution | `6.1.4` + `6.1.7` | codeSigning | IPA / Mach-O | 11 provisioning-profile certificates; the app inside an exported Mac App Store pkg |
+| iPhone Developer (legacy) | `6.1.2` | codeSigning | IPA / Mach-O | keychain; 8 provisioning-profile certificates |
+| iPhone Distribution (legacy) | `6.1.4` | codeSigning | IPA / Mach-O | keychain; profiles; an App Store export IPA's executable |
+| Mac App Distribution (3rd Party Mac Developer Application) | `6.1.7` | codeSigning | IPA / Mach-O | the Mac half of Apple Distribution; no standalone leaf on the host |
+| Mac Development (legacy Mac Developer) | `6.1.12` | codeSigning | IPA / Mach-O | the Mac half of Apple Development; Apple docs mark 6.1.12 as development |
+| Developer ID Application | `6.1.13` | codeSigning | IPA / Mach-O | keychain; third-party apps in `/Applications`; Apple docs |
+| Mac App Store application signing (Apple Mac OS Application Signing) | `6.1.9` | codeSigning | IPA / Mach-O | a Mac App Store app in `/Applications`; Apple docs |
+| Apple platform signing (macOS Software Signing) | `6.22` | codeSigning | IPA / Mach-O | `/bin/ls`, Safari |
+| Developer ID Installer | `6.1.14` | `1.2.840.113635.100.4.13` | pkg | a notarized third-party pkg |
+| Mac Installer Distribution (3rd Party Mac Developer Installer) | `6.1.8` | `1.2.840.113635.100.4.9` | pkg | Xcode-exported Mac App Store pkgs |
+| Apple package signing (Software Update) | `6.1.29.2` | `1.2.840.113635.100.4.1` | pkg | Xcode's bundled `CoreTypes`, `MobileDevice`, `MobileDeviceDevelopment`, and `XcodeSystemResources` pkgs |
+
+- Types are matched most specific first, so Apple Distribution (6.1.4 + 6.1.7) wins over iPhone Distribution (6.1.4 alone).
+- Several markers are critical on real leaves (for example 6.1.13, 6.1.14, 6.1.8, and on newer certificates 6.1.2, 6.1.4, 6.1.7, 6.1.12). Go rejects unhandled critical extensions, so the verifier treats the whole `1.2.840.113635.100` arc as handled and evaluates the markers itself.
+- Other Apple extensions on these leaves, such as `6.1.32`, `6.1.33`, `6.1.18` (kext signing), and the `5.1` certificate policy, do not affect the type.
+- Not recognized without local evidence: iOS App Store re-signing (Apple iPhone OS Application Signing) and TestFlight (`6.1.25.x`) leaves. They report `untrusted-chain` until a real certificate confirms their markers.
+- Xcode-exported Mac App Store pkgs carry only a CMS `x-signature`, which `pkg-info` reports as `unsupported`, so the Mac Installer Distribution row is reachable only for packages that also carry an RSA `signature`.

@@ -44,7 +44,7 @@ func TestVerifyMachOAgreesWithCodesignOnSystemBinary(t *testing.T) {
 	if !codesignAccepts(t, copyPath) {
 		t.Skip("codesign does not accept the copied system binary")
 	}
-	if result.Status != VerificationValid {
+	if result.Status != VerificationValid || !strings.Contains(result.Detail, "leaf is an Apple software signing certificate") {
 		t.Fatalf("codesign accepts /bin/ls but verification=%+v", result)
 	}
 
@@ -95,7 +95,7 @@ func TestVerifyXarAgreesWithPkgutil(t *testing.T) {
 	if !checkSignature(data) {
 		t.Skip("pkgutil does not accept the installed package")
 	}
-	if result := verify(data); result.Status != VerificationValid {
+	if result := verify(data); result.Status != VerificationValid || !strings.Contains(result.Detail, "leaf is an Apple Software Update signing certificate") {
 		t.Fatalf("pkgutil accepts the package but verification=%+v", result)
 	}
 

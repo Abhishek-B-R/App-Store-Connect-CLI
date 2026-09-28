@@ -42,7 +42,8 @@ With --verify-signature, the check runs offline, with no network or revocation c
   - the CMS signature over the primary code directory, and that alternate code directories are listed in its signed CDHashes
   - every code directory's page hashes for the slice stored first, and the hashes of the embedded requirements and entitlements blobs, Info.plist, and _CodeSignature/CodeResources, each of which must be sealed when present
   - that the signer chains to an Apple root at the current time. Signing times in the signature are not trusted, and secure timestamps are not evaluated, so a signature whose certificate has since expired reports expired
-It does not verify nested bundles, other slices of a universal binary, the resource files CodeResources lists, the embedded profile, or certificate policy markers. SHA-1 certificate signatures are not accepted.
+  - that the signer is a code-signing certificate, identified by its Apple type markers and codeSigning extended key usage: Apple Development, Apple Distribution, iPhone Developer, iPhone Distribution, Mac Development, Mac App Distribution, Developer ID Application, or Apple's own App Store and platform signing. Any other leaf, including an installer certificate or one whose type is not recognized, is untrusted-chain, and signatureVerificationDetail names the detected type
+It does not verify nested bundles, other slices of a universal binary, the resource files CodeResources lists, or the embedded profile. SHA-1 certificate signatures are not accepted.
 signatureVerification is then valid, invalid, untrusted-chain (including ad-hoc signatures), expired, or unsupported, and signatureVerificationDetail explains it. Any result other than valid exits 1 after writing the receipt.
 
 Examples:
@@ -93,7 +94,8 @@ With --verify-signature, the check runs offline, with no network or revocation c
   - that the checksum stored in the heap matches the compressed table of contents
   - the RSA signature over that checksum
   - that the first listed certificate chains to an Apple root at the current time. The table of contents creation time is not trusted, so a package whose certificate has since expired reports expired
-It does not recompute file payload checksums, verify a CMS x-signature, or check certificate policy markers. A package with only an x-signature is unsupported. SHA-1 certificate signatures are not accepted.
+  - that the signer is an installer certificate, identified by its Apple type markers and installer extended key usage: Developer ID Installer, Mac Installer Distribution (3rd Party Mac Developer Installer), or Apple's own package signing. Any other leaf, including a code-signing certificate or one whose type is not recognized, is untrusted-chain, and signatureVerificationDetail names the detected type
+It does not recompute file payload checksums or verify a CMS x-signature. A package with only an x-signature is unsupported. SHA-1 certificate signatures are not accepted.
 signatureVerification is then valid, invalid, untrusted-chain, expired, or unsupported, and signatureVerificationDetail explains it. Any result other than valid exits 1 after writing the receipt.
 
 Examples:

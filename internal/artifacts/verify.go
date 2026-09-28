@@ -92,9 +92,9 @@ func (policy *trustPolicy) addRoot(certificate *x509.Certificate) {
 }
 
 // oidAppleExtensionArc prefixes Apple's certificate extensions. Apple marks
-// several code-signing policy markers critical; Go rejects any critical
-// extension it does not process, so these are treated as handled. The
-// markers restrict certificate purpose and are not evaluated here.
+// several certificate-type markers critical; Go rejects any critical
+// extension it does not process, so these are treated as handled here and
+// the leaf's markers are evaluated by checkLeafType.
 var oidAppleExtensionArc = asn1.ObjectIdentifier{1, 2, 840, 113635, 100}
 
 func withAppleExtensionsHandled(certificate *x509.Certificate) *x509.Certificate {
@@ -110,10 +110,11 @@ func withAppleExtensionsHandled(certificate *x509.Certificate) *x509.Certificate
 }
 
 // evaluateChain checks that leaf chains to a trusted root at the current time,
-// using the policy's intermediates and any certificates the signature carries.
-// Signing times inside a signature are asserted by the signer and could be
-// backdated, so they are not used; trusted timestamps are not evaluated.
-func (policy *trustPolicy) evaluateChain(leaf *x509.Certificate, carried []*x509.Certificate) SignatureVerification {
+// using the policy's intermediates and any certificates the signature carries,
+// and that the leaf's Apple certificate type may sign for purpose. Signing
+// times inside a signature are asserted by the signer and could be backdated,
+// so they are not used; trusted timestamps are not evaluated.
+func (policy *trustPolicy) evaluateChain(leaf *x509.Certificate, carried []*x509.Certificate, purpose signingPurpose) SignatureVerification {
 	intermediates := x509.NewCertPool()
 	for _, certificate := range policy.intermediates {
 		intermediates.AddCert(certificate)
@@ -136,13 +137,20 @@ func (policy *trustPolicy) evaluateChain(leaf *x509.Certificate, carried []*x509
 	at := now.UTC().Format(time.RFC3339)
 	chains, err := verify(now)
 	if err == nil {
+		kind, typeErr := checkLeafType(leaf, purpose)
+		if typeErr != nil {
+			return SignatureVerification{Status: VerificationUntrustedChain, Detail: typeErr.Error()}
+		}
 		root := chains[0][len(chains[0])-1]
-		return SignatureVerification{Status: VerificationValid, Detail: fmt.Sprintf("chain to %s verified at current time %s", policy.rootNames[string(root.Raw)], at)}
+		return SignatureVerification{Status: VerificationValid, Detail: fmt.Sprintf("leaf is %s certificate; chain to %s verified at current time %s", withArticle(kind), policy.rootNames[string(root.Raw)], at)}
 	}
 	// A chain that verifies inside the leaf's validity window is trusted but
-	// was used outside it.
+	// was used outside it. A leaf of the wrong type is untrusted either way.
 	midpoint := leaf.NotBefore.Add(leaf.NotAfter.Sub(leaf.NotBefore) / 2)
 	if _, midErr := verify(midpoint); midErr == nil {
+		if _, typeErr := checkLeafType(leaf, purpose); typeErr != nil {
+			return SignatureVerification{Status: VerificationUntrustedChain, Detail: typeErr.Error()}
+		}
 		return SignatureVerification{Status: VerificationExpired, Detail: fmt.Sprintf("certificate chain is not valid at current time %s (leaf valid %s to %s)", at, leaf.NotBefore.UTC().Format(time.RFC3339), leaf.NotAfter.UTC().Format(time.RFC3339))}
 	} else if isExpiryError(err) {
 		// Report why the chain is untrusted rather than the expiry that masked it.

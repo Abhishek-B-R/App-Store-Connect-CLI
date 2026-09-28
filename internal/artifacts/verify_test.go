@@ -201,7 +201,7 @@ func TestVerifyIPAHandlesMalformedSignaturesWithoutPanicking(t *testing.T) {
 }
 
 func TestVerifyPKG(t *testing.T) {
-	chain := artifactstest.NewTrustChain(t, validFrom, validUntil)
+	chain := artifactstest.NewTrustChainWithLeaf(t, artifactstest.DeveloperIDInstallerLeaf, validFrom, validUntil)
 	policy := testPolicy(chain)
 	info := map[string][]byte{"PackageInfo": []byte(`<pkg-info version="1.0" identifier="com.example.pkg"/>`)}
 	valid := artifactstest.SignedXar(t, info, chain, time.Now())
@@ -239,7 +239,7 @@ func TestVerifyPKG(t *testing.T) {
 	expectVerification(t, verify(swapped, policy), VerificationInvalid, "checksum does not match")
 
 	expectVerification(t, verify(valid, appleTrustPolicyForAnyOS(t)), VerificationUntrustedChain, "does not chain to an embedded Apple root")
-	expired := artifactstest.NewTrustChain(t, time.Now().AddDate(-2, 0, 0), time.Now().AddDate(-1, 0, 0))
+	expired := artifactstest.NewTrustChainWithLeaf(t, artifactstest.DeveloperIDInstallerLeaf, time.Now().AddDate(-2, 0, 0), time.Now().AddDate(-1, 0, 0))
 	expectVerification(t, verify(artifactstest.SignedXar(t, info, expired, time.Now()), testPolicy(expired)), VerificationExpired, "not valid at current time")
 	// A backdated creation time does not rescue an expired certificate.
 	expectVerification(t, verify(artifactstest.SignedXar(t, info, expired, time.Now().AddDate(-1, -6, 0)), testPolicy(expired)), VerificationExpired, "not valid at current time")

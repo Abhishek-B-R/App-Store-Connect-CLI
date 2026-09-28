@@ -285,7 +285,7 @@ func verifyCodeSignature(inputs codeSignatureInputs, policy *trustPolicy) Signat
 	if signed.leaf == nil {
 		return SignatureVerification{Status: VerificationUntrustedChain, Detail: "ad-hoc signature has no signing certificate; " + integrity}
 	}
-	chain := policy.evaluateChain(signed.leaf, signed.parsed.Certificates)
+	chain := policy.evaluateChain(signed.leaf, signed.parsed.Certificates, purposeCodeSigning)
 	if chain.Status != VerificationValid {
 		chain.Detail = "CMS signature and " + integrity + ", but " + chain.Detail
 		return chain

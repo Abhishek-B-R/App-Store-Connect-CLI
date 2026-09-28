@@ -55,7 +55,7 @@ func TestRunArtifactInfoVerifySignatureFailsClosed(t *testing.T) {
 	signedPKG := filepath.Join(dir, "signed.pkg")
 	unsignedPKG := filepath.Join(dir, "unsigned.pkg")
 	for path, data := range map[string][]byte{
-		signedPKG:   artifactstest.SignedXar(t, info, chain, time.Now()),
+		signedPKG:   artifactstest.SignedXar(t, info, artifactstest.NewTrustChainWithLeaf(t, artifactstest.DeveloperIDInstallerLeaf, time.Now().Add(-time.Hour), time.Now().AddDate(1, 0, 0)), time.Now()),
 		unsignedPKG: artifactstest.Xar(t, info, ""),
 	} {
 		if err := os.WriteFile(path, data, 0o600); err != nil {
@@ -182,7 +182,7 @@ func TestRunIPAInfoVerifySignatureChecksPrimaryUniversalSlice(t *testing.T) {
 
 func TestRunPKGInfoVerifySignatureCoversProductArchiveTOC(t *testing.T) {
 	isolateArtifactCommandEnv(t)
-	chain := artifactstest.NewTrustChain(t, time.Now().Add(-time.Hour), time.Now().AddDate(1, 0, 0))
+	chain := artifactstest.NewTrustChainWithLeaf(t, artifactstest.DeveloperIDInstallerLeaf, time.Now().Add(-time.Hour), time.Now().AddDate(1, 0, 0))
 	files := map[string][]byte{
 		"Distribution":         []byte(`<installer-gui-script minSpecVersion="2"><product id="com.example.demo" version="2.3.4"/><pkg-ref id="com.example.demo" version="2.3.4">#Demo.pkg</pkg-ref></installer-gui-script>`),
 		"Demo.pkg/PackageInfo": []byte(`<pkg-info identifier="com.example.demo" version="2.3.4" install-location="/Applications"/>`),
