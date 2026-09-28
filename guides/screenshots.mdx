@@ -310,6 +310,11 @@ Supported devices:
 * Apple TV: `apple-tv`
 * Mac: `mac` (canvas without a bezel)
 
+Frame each device from a capture of the same screen shape, such as a 422x514
+Apple Watch Ultra 3 capture for `watch-ultra-3`. When an input's aspect ratio
+differs from the device screen by more than 2%, `asc screenshots frame` prints a
+warning on stderr, because the image is letterboxed inside the screen.
+
 Each device entry lists its `frameColors`; pass one with `--frame-color`. See [Frame Screenshots](/commands/screenshots#frame-screenshots) for the full device and color matrix.
 
 To frame a whole directory and retry only failed inputs on the next run:
