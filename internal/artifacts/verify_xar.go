@@ -163,9 +163,15 @@ func verifyXarRSASignature(source io.ReaderAt, size int64, document *xarDocument
 	if err != nil {
 		return nil, nil, err
 	}
-	// xar signs the checksum as a precomputed digest of its algorithm.
+	// xar signs the checksum as a precomputed digest of its algorithm. Older
+	// productsign releases instead signed the digest of the checksum, which
+	// pkgutil also accepts; both forms bind the table of contents.
 	if err := rsa.VerifyPKCS1v15(public, checksum.hash, checksum.value, value); err != nil {
-		return nil, nil, fmt.Errorf("package RSA signature does not verify over the table of contents checksum")
+		hasher := checksum.hash.New()
+		hasher.Write(checksum.value)
+		if err := rsa.VerifyPKCS1v15(public, checksum.hash, hasher.Sum(nil), value); err != nil {
+			return nil, nil, fmt.Errorf("package RSA signature does not verify over the table of contents checksum")
+		}
 	}
 	return certificates[0], certificates[1:], nil
 }

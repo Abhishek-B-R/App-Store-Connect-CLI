@@ -288,6 +288,19 @@ func codeSigningCMS(t testing.TB, chain TrustChain, directories [][]byte, hashTy
 // may contain "/" to place files in directories, as in a product archive.
 func SignedXar(t testing.TB, files map[string][]byte, chain TrustChain, created time.Time) []byte {
 	t.Helper()
+	return signedXar(t, files, chain, created, false)
+}
+
+// SignedXarHashingChecksum is SignedXar in the form older productsign
+// releases wrote: the RSA signature covers the SHA-1 digest of the checksum
+// rather than the checksum itself.
+func SignedXarHashingChecksum(t testing.TB, files map[string][]byte, chain TrustChain, created time.Time) []byte {
+	t.Helper()
+	return signedXar(t, files, chain, created, true)
+}
+
+func signedXar(t testing.TB, files map[string][]byte, chain TrustChain, created time.Time, hashChecksum bool) []byte {
+	t.Helper()
 	const checksumSize, signatureSize = 20, 256
 	filesXML, heap := xarTreeFiles(files, checksumSize+signatureSize)
 	toc := `<xar><toc><checksum style="sha1"><offset>0</offset><size>20</size></checksum>` +
@@ -304,7 +317,12 @@ func SignedXar(t testing.TB, files map[string][]byte, chain TrustChain, created 
 		t.Fatal(err)
 	}
 	checksum := sha1.Sum(compressed.Bytes()) //nolint:gosec // xar format hash.
-	signature, err := rsa.SignPKCS1v15(rand.Reader, chain.LeafKey, crypto.SHA1, checksum[:])
+	signed := checksum[:]
+	if hashChecksum {
+		digest := sha1.Sum(signed) //nolint:gosec // xar format hash.
+		signed = digest[:]
+	}
+	signature, err := rsa.SignPKCS1v15(rand.Reader, chain.LeafKey, crypto.SHA1, signed)
 	if err != nil {
 		t.Fatal(err)
 	}

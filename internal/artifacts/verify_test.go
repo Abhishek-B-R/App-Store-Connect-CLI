@@ -215,6 +215,22 @@ func TestVerifyPKG(t *testing.T) {
 	}
 	expectVerification(t, verify(valid, policy), VerificationValid, "chain to Test Root CA verified at current time")
 
+	// Older productsign releases signed the SHA-1 digest of the checksum;
+	// pkgutil accepts that form, so the verifier does too.
+	legacy := artifactstest.SignedXarHashingChecksum(t, info, chain, time.Now())
+	expectVerification(t, verify(legacy, policy), VerificationValid, "chain to Test Root CA verified at current time")
+	legacyDocument, _, _, err := readXarFiles(bytes.NewReader(legacy), int64(len(legacy)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacyChecksum, err := verifiedXarChecksum(bytes.NewReader(legacy), int64(len(legacy)), legacyDocument)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacyTampered := append([]byte(nil), legacy...)
+	legacyTampered[legacyChecksum.heap+30] ^= 0x01
+	expectVerification(t, verify(legacyTampered, policy), VerificationInvalid, "RSA signature does not verify")
+
 	document, _, _, err := readXarFiles(bytes.NewReader(valid), int64(len(valid)))
 	if err != nil {
 		t.Fatal(err)
