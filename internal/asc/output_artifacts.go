@@ -1,5 +1,7 @@
 package asc
 
+import "strings"
+
 // ArtifactIPAInfo is the offline IPA inspection receipt.
 type ArtifactIPAInfo struct {
 	SignatureVerification string                  `json:"signatureVerification"`
@@ -18,6 +20,18 @@ type ArtifactIPAInfo struct {
 	Profile               *ArtifactProfileSummary `json:"profile,omitempty"`
 	CodeSignature         string                  `json:"codeSignature,omitempty"`
 	Signer                *ArtifactSigner         `json:"signer"`
+	Architectures         []ArtifactArchitecture  `json:"architectures,omitempty"`
+	SignerConsistent      *bool                   `json:"signerConsistent,omitempty"`
+}
+
+// ArtifactArchitecture is the code signature of one main executable slice.
+// cpuType and cpuSubtype are the raw Mach-O values; arch is the lipo name.
+type ArtifactArchitecture struct {
+	CPUType       uint32          `json:"cpuType"`
+	CPUSubtype    uint32          `json:"cpuSubtype"`
+	Arch          string          `json:"arch"`
+	CodeSignature string          `json:"codeSignature"`
+	Signer        *ArtifactSigner `json:"signer"`
 }
 
 // ArtifactSigner is the leaf certificate read from an artifact signature. It is
@@ -65,11 +79,15 @@ type ArtifactPKGInfo struct {
 }
 
 func artifactIPAInfoRows(result *ArtifactIPAInfo) ([]string, [][]string) {
-	headers := []string{"Bundle ID", "Version", "Build", "Status", "Signer", "Team ID", "Signature"}
+	headers := []string{"Bundle ID", "Version", "Build", "Status", "Signer", "Team ID", "Signature", "Architectures"}
 	if result == nil {
 		return headers, nil
 	}
-	return headers, [][]string{{result.BundleID, result.Version, result.BuildNumber, result.Status, artifactSignerLabel(result.SignerCommonName, result.CodeSignature), result.TeamID, result.SignatureVerification}}
+	architectures := make([]string, 0, len(result.Architectures))
+	for _, architecture := range result.Architectures {
+		architectures = append(architectures, architecture.Arch)
+	}
+	return headers, [][]string{{result.BundleID, result.Version, result.BuildNumber, result.Status, artifactSignerLabel(result.SignerCommonName, result.CodeSignature), result.TeamID, result.SignatureVerification, strings.Join(architectures, ", ")}}
 }
 
 func artifactPKGInfoRows(result *ArtifactPKGInfo) ([]string, [][]string) {
