@@ -59,6 +59,7 @@ func TestShotsFrame_RejectsInvalidTextBoxAndFontFile(t *testing.T) {
 	badColorOverlay := writeFrameTestFile(t, filepath.Join(dir, "bad-color.json"), []byte(`{"default":{"title":"A","textBox":true,"textBoxColor":"navy"}}`))
 	detailsOverlay := writeFrameTestFile(t, filepath.Join(dir, "details.json"), []byte(`{"default":{"title":"A"},"data":[{"filter":"raw","title":"B","textBoxPadding":4}]}`))
 	noBoxOverlay := writeFrameTestFile(t, filepath.Join(dir, "no-box.json"), []byte(`{"default":{"title":"A"}}`))
+	unmatchedBoxOverlay := writeFrameTestFile(t, filepath.Join(dir, "unmatched-box.json"), []byte(`{"default":{"title":"A"},"data":[{"filter":"paywall","title":"B","textBox":true}]}`))
 	noTextOverlay := writeFrameTestFile(t, filepath.Join(dir, "no-text.json"), []byte(`{"default":{"background":"#111111"}}`))
 	tests := []struct {
 		name    string
@@ -71,6 +72,7 @@ func TestShotsFrame_RejectsInvalidTextBoxAndFontFile(t *testing.T) {
 		{name: "box without text", args: []string{"--text-box"}, wantErr: "--text-box requires --title, --subtitle, or --overlay-config"},
 		{name: "detail without box", args: []string{"--title", "Home", "--text-box-padding", "12"}, wantErr: "--text-box-padding requires --text-box or an --overlay-config textBox entry"},
 		{name: "detail when overlay never enables box", args: []string{"--overlay-config", noBoxOverlay, "--text-box-color", "#000"}, wantErr: "--text-box-color requires --text-box or an --overlay-config textBox entry"},
+		{name: "detail when matched entry leaves box off", args: []string{"--overlay-config", unmatchedBoxOverlay, "--text-box-radius", "3"}, wantErr: "--text-box-radius has no effect: no framed input has a title or keyword with a text box"},
 		{name: "box with no overlay text", args: []string{"--overlay-config", noTextOverlay, "--text-box"}, wantErr: "--text-box has no effect: --overlay-config supplies no title or keyword"},
 		{name: "overlay invalid color", args: []string{"--overlay-config", badColorOverlay}, wantErr: `--overlay-config: overlay config default.textBoxColor must be a hex color`},
 		{name: "overlay details without box", args: []string{"--overlay-config", detailsOverlay}, wantErr: "--overlay-config: overlay config data[0] sets textBoxPadding without textBox: true"},

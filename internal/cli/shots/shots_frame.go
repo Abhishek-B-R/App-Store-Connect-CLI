@@ -460,10 +460,14 @@ type frameRenderSettings struct {
 	textBox         textBoxFlags
 }
 
-// requireStyledText rejects --font and --text-position when no framed input
-// resolves to title or subtitle text, so the flags never go unused. With
+// requireStyledText rejects --font, --text-position, and --text-box flags when
+// no framed input resolves to title or subtitle text (or, for box details, to
+// a box), so the flags never go unused. With
 // --input-dir it is enough for one input to carry text.
 func (settings frameRenderSettings) requireStyledText(hasText bool) error {
+	if err := settings.textBox.requireUsed(); err != nil {
+		return err
+	}
 	if hasText || settings.overlay == nil {
 		return nil
 	}

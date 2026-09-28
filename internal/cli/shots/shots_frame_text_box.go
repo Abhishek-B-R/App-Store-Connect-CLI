@@ -25,10 +25,14 @@ type textBoxFlags struct {
 	color   string
 	padding *int
 	radius  *int
+	// used records whether resolve drew a box for any input, so detail
+	// flags that no matched overlay entry enables are rejected rather than
+	// ignored. It is shared by every copy of the settings in one run.
+	used *bool
 }
 
 func parseTextBoxFlags(enabled bool, values textBoxFlagValues) (textBoxFlags, error) {
-	flags := textBoxFlags{enabled: enabled}
+	flags := textBoxFlags{enabled: enabled, used: new(bool)}
 	if values.colorSet {
 		color := strings.TrimSpace(values.color)
 		if err := screenshots.ValidateTextBoxColor(color); err != nil {
@@ -90,5 +94,20 @@ func (flags textBoxFlags) resolve(entry screenshots.OverlayEntry) *screenshots.T
 	if flags.radius != nil {
 		box.Radius = flags.radius
 	}
+	if flags.used != nil {
+		*flags.used = true
+	}
 	return box
+}
+
+// requireUsed rejects --text-box-color, --text-box-padding, and
+// --text-box-radius when every framed input resolved without a box. Call it
+// after resolving every input.
+func (flags textBoxFlags) requireUsed() error {
+	detailSet := flags.color != "" || flags.padding != nil || flags.radius != nil
+	if !detailSet || (flags.used != nil && *flags.used) {
+		return nil
+	}
+	parameter := flags.firstDetailFlag()
+	return shared.WithDiagnostic(shared.UsageError(parameter+" has no effect: no framed input has a title or keyword with a text box enabled by --text-box or its --overlay-config entry"), shared.DiagnosticConflictingInput, parameter)
 }
