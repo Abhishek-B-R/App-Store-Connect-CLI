@@ -115,6 +115,11 @@
     "icon": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/51/07/86/51078666-e31e-5e8c-14f8-833eb7091863/AppIcon-1x_U007emarketing-0-11-0-85-220-0.png/512x512bb.jpg"
   },
   {
+    "app": "Axo Tap: Idle Axolotl Pet",
+    "link": "https://apps.apple.com/us/app/axo-tap-idle-axolotl-pet/id6799872294?uo=4",
+    "icon": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/25/72/c2/2572c20e-6176-4340-43e3-e07a4c65cf5a/AppIcon-0-0-1x_U007epad-0-1-85-220.png/512x512bb.jpg"
+  },
+  {
     "app": "Azivault",
     "link": "https://apps.apple.com/us/app/azivault/id6774401513?mt=12&uo=4",
     "icon": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/cc/35/bd/cc35bd9b-409b-876b-e20c-036942bbee7f/AppIcon-0-0-85-220-0-5-0-2x.png/512x512bb.png"
@@ -412,6 +417,11 @@
     "app": "DayBar",
     "link": "https://apps.apple.com/us/app/daybar/id6739052447?mt=12&uo=4",
     "icon": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/79/16/d5/7916d56d-bf7f-37a0-cb0c-bb50f04ed4f3/AppIcon-0-0-85-220-0-5-0-2x.png/512x512bb.png"
+  },
+  {
+    "app": "Daybard: Your Day as an RPG",
+    "link": "https://apps.apple.com/us/app/daybard-your-day-as-an-rpg/id6786213426?uo=4",
+    "icon": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/2e/7f/30/2e7f3052-0c2e-102c-c994-e44e126d3a67/AppIcon-0-0-1x_U007emarketing-0-8-0-85-220.png/512x512bb.jpg"
   },
   {
     "app": "DayCount: Countdown Widget",
@@ -2143,6 +2153,11 @@
     "app": "Weather mini - Trip Forecasts",
     "link": "https://apps.apple.com/us/app/weather-mini-trip-forecasts/id892589817",
     "icon": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/3c/c6/c1/3cc6c19c-acec-fb4d-ee88-63a1bfc422c4/AppIcon-0-0-1x_U007epad-0-1-0-sRGB-85-220.png/512x512bb.jpg"
+  },
+  {
+    "app": "Woofdoku: Sudoku with Dogs",
+    "link": "https://apps.apple.com/us/app/woofdoku-sudoku-with-dogs/id6799775594?uo=4",
+    "icon": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/84/4b/eb/844beb9b-2b97-1180-fb47-81f76f90a701/AppIcon-0-0-1x_U007epad-0-1-85-220.png/512x512bb.jpg"
   },
   {
     "app": "WordFlux: Word Puzzles",
