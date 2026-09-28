@@ -2,6 +2,7 @@ package artifacts
 
 import (
 	"bytes"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -201,5 +202,21 @@ func TestInspectPKGFlatPackageHasNoComponents(t *testing.T) {
 	manifest, err := InspectPKG(bytes.NewReader(pkg), int64(len(pkg)))
 	if err != nil || manifest.Components != nil || manifest.BundleID != "" || manifest.BuildNumber != "" || manifest.Warnings != nil {
 		t.Fatalf("manifest=%+v err=%v", manifest, err)
+	}
+}
+
+// TestFindCPIOFileSkipsLargestDeclaredEntryAsTruncated covers the skip path
+// with the largest size an odc header can declare (11 octal digits): the
+// entry is skipped without overflow and the short stream reports truncation.
+func TestFindCPIOFileSkipsLargestDeclaredEntryAsTruncated(t *testing.T) {
+	name := "./other"
+	var archive bytes.Buffer
+	fmt.Fprintf(&archive, "070707%06o%06o%06o%06o%06o%06o%06o%011o%06o%011o", 0, 1, 0o100644, 0, 0, 1, 0, 0, len(name)+1, uint64(0o77777777777))
+	archive.WriteString(name + "\x00")
+	archive.WriteString("short")
+
+	_, err := findCPIOFile(&archive, map[string]bool{"Demo.app/Contents/Info.plist": true})
+	if err == nil || err.Error() != "payload is truncated" {
+		t.Fatalf("findCPIOFile() error = %v, want payload is truncated", err)
 	}
 }

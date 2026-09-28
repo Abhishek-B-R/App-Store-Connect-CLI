@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/url"
 	"path"
 	"strconv"
@@ -434,7 +435,10 @@ func findCPIOFile(reader io.Reader, wanted map[string]bool) ([]byte, error) {
 			}
 			return data, nil
 		}
-		if _, err := io.CopyN(io.Discard, reader, int64(min(fileSize, uint64(1<<62)))); err != nil {
+		if fileSize > math.MaxInt64 {
+			return nil, fmt.Errorf("payload has a cpio entry of %d bytes", fileSize)
+		}
+		if _, err := io.CopyN(io.Discard, reader, int64(fileSize)); err != nil {
 			return nil, cpioReadError(err)
 		}
 	}
