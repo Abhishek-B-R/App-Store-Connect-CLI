@@ -3,6 +3,7 @@ package web
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -131,7 +132,7 @@ func TestResolveSessionRetriesOnceWithCleanJarAfterCachedSignin503(t *testing.T)
 		t.Fatalf("cached attempts = %d, clean-jar attempts = %d; want exactly one each", fixture.cachedAttempts, fixture.freshAttempts)
 	}
 	if len(fixture.discarded) != 1 || fixture.discarded[0] != "user@example.com" {
-		t.Fatalf("expected the stale entry to be discarded once, got %v", fixture.discarded)
+		t.Fatalf("expected the entry the clean jar proved stale to be discarded once, got %v", fixture.discarded)
 	}
 	if len(fixture.persisted) != 1 || fixture.persisted[0] != freshSession {
 		t.Fatal("expected the fresh session to replace the stale cache entry")
@@ -152,8 +153,8 @@ func TestResolveSessionExplainsRepeatedSignin503(t *testing.T) {
 	if fixture.cachedAttempts != 1 || fixture.freshAttempts != 1 {
 		t.Fatalf("cached attempts = %d, clean-jar attempts = %d; want exactly one each", fixture.cachedAttempts, fixture.freshAttempts)
 	}
-	if len(fixture.discarded) != 1 {
-		t.Fatalf("expected the stale entry to be discarded so a rerun does not replay it, got %v", fixture.discarded)
+	if len(fixture.discarded) != 0 {
+		t.Fatalf("a 5xx on both jars points at Apple, not the cache; expected the entry to be kept, got %v", fixture.discarded)
 	}
 	if len(fixture.persisted) != 0 {
 		t.Fatal("did not expect a failed login to persist a session")
@@ -195,7 +196,7 @@ func TestResolveSessionDoesNotRetrySignin503WithoutCachedCookies(t *testing.T) {
 	}
 }
 
-func TestResolveSessionPromptedPasswordDiscardsStaleCacheAfterSignin503(t *testing.T) {
+func TestResolveSessionPromptedPasswordRetriesCleanJarAfterSignin503(t *testing.T) {
 	fixture := newSigninUnavailableFixture(t, true)
 	preserveWebPasswordHooks(t)
 	t.Setenv(webPasswordEnv, "")
@@ -223,5 +224,27 @@ func TestResolveSessionPromptedPasswordDiscardsStaleCacheAfterSignin503(t *testi
 	}
 	if fixture.cachedAttempts != 1 || fixture.freshAttempts != 1 || len(fixture.discarded) != 1 {
 		t.Fatalf("cached = %d, fresh = %d, discarded = %v; want one each", fixture.cachedAttempts, fixture.freshAttempts, fixture.discarded)
+	}
+}
+
+func TestResolveSessionKeepsCacheWhenCleanRetryFailsLocally(t *testing.T) {
+	fixture := newSigninUnavailableFixture(t, true)
+	webLoginFn = func(context.Context, webcore.LoginCredentials) (*webcore.AuthSession, error) {
+		fixture.freshAttempts++
+		return nil, errors.New("dial tcp: lookup idmsa.apple.com: no such host")
+	}
+
+	_, _, err := resolveSession(context.Background(), "user@example.com", "", "")
+	if err == nil {
+		t.Fatal("expected sign-in to fail")
+	}
+	if fixture.cachedAttempts != 1 || fixture.freshAttempts != 1 {
+		t.Fatalf("cached attempts = %d, clean-jar attempts = %d; want exactly one each", fixture.cachedAttempts, fixture.freshAttempts)
+	}
+	if len(fixture.discarded) != 0 {
+		t.Fatalf("a clean retry that never reached Apple proves nothing about the cache, got discards %v", fixture.discarded)
+	}
+	if strings.Contains(err.Error(), "asc web auth logout") {
+		t.Fatalf("did not expect the 5xx hint for a non-5xx failure: %q", err.Error())
 	}
 }

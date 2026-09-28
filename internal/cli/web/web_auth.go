@@ -777,8 +777,8 @@ func loginWithOptionalTwoFactorUsing(ctx context.Context, progressMessage, apple
 	return nil, err
 }
 
-func loginWithOptionalTwoFactor(ctx context.Context, appleID, password, twoFactorCode string, readCommandCode twoFactorCodeCommandReader, twoFactorCodeCommand ...string) (*webcore.AuthSession, error) {
-	return loginWithOptionalTwoFactorUsing(ctx, "Signing in to Apple web session", appleID, password, twoFactorCode, webLoginFn, nil, readCommandCode, twoFactorCodeCommand...)
+func loginWithOptionalTwoFactor(ctx context.Context, appleID, password, twoFactorCode string, twoFactorStarted func(), readCommandCode twoFactorCodeCommandReader, twoFactorCodeCommand ...string) (*webcore.AuthSession, error) {
+	return loginWithOptionalTwoFactorUsing(ctx, "Signing in to Apple web session", appleID, password, twoFactorCode, webLoginFn, twoFactorStarted, readCommandCode, twoFactorCodeCommand...)
 }
 
 func loginWithOptionalTwoFactorClientTracked(ctx context.Context, client *http.Client, appleID, password, twoFactorCode string, readCommandCode twoFactorCodeCommandReader, twoFactorCodeCommand ...string) (*webcore.AuthSession, bool, error) {
@@ -885,13 +885,18 @@ func resolveWebSession(ctx context.Context, appleID, password, twoFactorCode str
 	}
 
 	var (
-		expiredCachedSession   *webcore.AuthSession
-		fallbackPassword       resolvedWebPassword
-		skipStoredPassword     bool
-		twoFactorCodeConsumed  bool
-		consumedTwoFactorCode  string
-		lastCommandTwoFactor   string
-		staleSessionDiscarded  bool
+		expiredCachedSession  *webcore.AuthSession
+		fallbackPassword      resolvedWebPassword
+		skipStoredPassword    bool
+		twoFactorCodeConsumed bool
+		consumedTwoFactorCode string
+		lastCommandTwoFactor  string
+		staleSessionDiscarded bool
+		// serverRejectedCache is the loaded cache entry whose cookie jar IdMSA
+		// answered with a 5xx (#2806). It is discarded only if the clean-jar
+		// retry then signs in or reaches 2FA, which proves the jar was the cause.
+		serverRejectedCache    *webcore.AuthSession
+		serverRejectedAppleID  string
 		staleSessionDiscardErr error
 	)
 
@@ -1062,7 +1067,7 @@ func resolveWebSession(ctx context.Context, appleID, password, twoFactorCode str
 		// retry that also fails cannot leave it for the next invocation to
 		// replay. A successful fresh login replaces the entry anyway.
 		if !twoFactorStarted && isSigninServerError(loginErr) {
-			printCacheLookupWarning(sessionCacheWarningWriter, staleSessionDiscardWarning(discardProvenStaleSession(reauthAppleID)))
+			serverRejectedCache, serverRejectedAppleID = expiredCachedSession, reauthAppleID
 		}
 
 		// A cached jar can become unusable independently of the credentials,
@@ -1128,6 +1133,21 @@ func resolveWebSession(ctx context.Context, appleID, password, twoFactorCode str
 		return nil, "", shared.UsageError(fmt.Sprintf("password is required: run in a terminal for an interactive prompt or set %s", webPasswordEnvDisplay()))
 	}
 
+	// A 5xx on the cached jar alone does not prove the jar is stale: Apple also
+	// answers outages and throttling with 5xx, and the entry may still hold a
+	// valid trust cookie. Only when a clean-jar retry signs in or reaches 2FA
+	// has Apple shown the cached jar to be the cause; a local or transport
+	// failure proves nothing. Discard it then, before any later exit path (a
+	// failed persist, a cancelled prompt) can leave it to be replayed.
+	discardServerRejectedCache := func() {
+		if serverRejectedCache == nil || staleSessionDiscarded {
+			return
+		}
+		staleSessionDiscarded = true
+		if _, discardErr := deleteStaleWebSessionFn(strings.TrimSpace(serverRejectedAppleID), serverRejectedCache); discardErr != nil && sessionCacheWarningWriter != nil {
+			_, _ = fmt.Fprintf(sessionCacheWarningWriter, "Warning: %v.\n", staleSessionDiscardWarning(discardErr))
+		}
+	}
 	login := func(candidate resolvedWebPassword) (*webcore.AuthSession, bool, error) {
 		// Interactive password and 2FA entry can outlast the caller's request
 		// deadline, so bound every attempt with a fresh timeout derived from the
@@ -1141,7 +1161,13 @@ func resolveWebSession(ctx context.Context, appleID, password, twoFactorCode str
 		if expiredCachedSession != nil && expiredCachedSession.Client != nil {
 			return loginWithOptionalTwoFactorClientTracked(loginCtx, expiredCachedSession.Client, resolvedAppleID, candidate.value, code, readCommandTwoFactorCode, command)
 		}
-		session, err := loginWithOptionalTwoFactor(loginCtx, resolvedAppleID, candidate.value, code, readCommandTwoFactorCode, command)
+		reachedTwoFactor := false
+		session, err := loginWithOptionalTwoFactor(loginCtx, resolvedAppleID, candidate.value, code, func() {
+			reachedTwoFactor = true
+		}, readCommandTwoFactorCode, command)
+		if err == nil || reachedTwoFactor {
+			discardServerRejectedCache()
+		}
 		return session, false, err
 	}
 	loginWithPromptedFreshFallback := func(candidate resolvedWebPassword) (*webcore.AuthSession, error) {
@@ -1162,7 +1188,7 @@ func resolveWebSession(ctx context.Context, appleID, password, twoFactorCode str
 			printCacheLookupWarning(sessionCacheWarningWriter, staleSessionDiscardWarning(discardErr))
 			markTwoFactorCodeConsumed()
 		} else if isSigninServerError(err) {
-			printCacheLookupWarning(sessionCacheWarningWriter, staleSessionDiscardWarning(discardProvenStaleSession(resolvedAppleID)))
+			serverRejectedCache, serverRejectedAppleID = expiredCachedSession, resolvedAppleID
 		}
 		expiredCachedSession = nil
 		session, _, err = login(candidate)
