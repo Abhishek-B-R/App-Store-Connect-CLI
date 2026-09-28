@@ -16,6 +16,7 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"math/big"
+	"slices"
 	"testing"
 	"time"
 
@@ -130,8 +131,14 @@ type CodeSignatureOptions struct {
 	InfoPlist     []byte
 	CodeResources []byte
 	Entitlements  []byte
+	// LaunchConstraint is sealed in special slot 8 and embedded as a
+	// launch-constraint blob.
+	LaunchConstraint []byte
 	// OmitCDHashes leaves alternate code directories out of the CMS.
 	OmitCDHashes bool
+	// OmitBlobs drops these superblob slots after the code directories
+	// seal them, as an attacker stripping signed metadata would.
+	OmitBlobs []uint32
 }
 
 // CodeSize is the length of the signed code region SignedMachO emits.
@@ -177,6 +184,11 @@ func SignedMachO(t testing.TB, options CodeSignatureOptions) []byte {
 		entitlements = Blob(0xfade7171, options.Entitlements)
 		special[5] = entitlements
 	}
+	var launchConstraint []byte
+	if options.LaunchConstraint != nil {
+		launchConstraint = Blob(0xfade8181, options.LaunchConstraint)
+		special[8] = launchConstraint
+	}
 	directories := make([][]byte, 0, len(hashTypes))
 	for _, hashType := range hashTypes {
 		directories = append(directories, CodeDirectory(code, hashType, special))
@@ -186,6 +198,10 @@ func SignedMachO(t testing.TB, options CodeSignatureOptions) []byte {
 	if entitlements != nil {
 		slots = append(slots, Slot{Kind: 5, Blob: entitlements})
 	}
+	if launchConstraint != nil {
+		slots = append(slots, Slot{Kind: 8, Blob: launchConstraint})
+	}
+	slots = slices.DeleteFunc(slots, func(slot Slot) bool { return slices.Contains(options.OmitBlobs, slot.Kind) })
 	for index, directory := range directories[1:] {
 		slots = append(slots, Slot{Kind: uint32(0x1000 + index), Blob: directory})
 	}

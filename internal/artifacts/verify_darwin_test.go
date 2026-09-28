@@ -116,3 +116,19 @@ func TestVerifyXarAgreesWithPkgutil(t *testing.T) {
 		t.Fatalf("tampered verification=%+v", result)
 	}
 }
+
+// Platform binaries such as xpcproxy seal embedded launch-constraint blobs in
+// special slot 8, which the presence check must accept.
+func TestVerifyMachOAgreesWithCodesignOnLaunchConstrainedBinary(t *testing.T) {
+	const path = "/usr/libexec/xpcproxy"
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Skipf("system binary unavailable: %v", err)
+	}
+	if !codesignAccepts(t, path) {
+		t.Skip("codesign does not accept the system binary")
+	}
+	if result := verifyMachOBytes(data, appleTrustPolicyForTest(t)); result.Status != VerificationValid {
+		t.Fatalf("codesign accepts %s but verification=%+v", path, result)
+	}
+}

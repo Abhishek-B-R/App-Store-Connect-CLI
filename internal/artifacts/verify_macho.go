@@ -226,7 +226,16 @@ type codeSignatureInputs struct {
 	bundleFiles map[int][]byte
 }
 
-var specialSlotNames = map[int]string{1: "Info.plist", 2: "requirements", 3: "CodeResources", 5: "entitlements", 7: "DER entitlements"}
+var specialSlotNames = map[int]string{
+	1: "Info.plist", 2: "requirements", 3: "CodeResources", 5: "entitlements", 7: "DER entitlements",
+	8: "self launch constraint", 9: "parent launch constraint", 10: "responsible launch constraint", 11: "library constraint",
+}
+
+// embeddedBlobSlots are the special slots whose sealed data is a blob stored in
+// the signature itself rather than a bundle file or external data, per the
+// CSSLOT_* constants in the macOS SDK's kern/cs_blobs.h. Slots 4 (application)
+// and 6 are not embedded blobs.
+var embeddedBlobSlots = []int{2, 5, 7, 8, 9, 10, 11}
 
 func specialSlotName(index int) string {
 	if name, ok := specialSlotNames[index]; ok {
@@ -342,6 +351,16 @@ func verifySpecialSlots(directory *codeDirectory, blobs map[uint32][]byte, input
 		}
 		if !hashMatches(directory, blob, directory.specialSlot(int(kind))) {
 			return fmt.Errorf("embedded %s blob does not match its code directory hash", specialSlotName(int(kind)))
+		}
+	}
+	// The superblob index is not signed, so a sealed blob that was stripped
+	// from it must fail rather than go unchecked.
+	for _, index := range embeddedBlobSlots {
+		if index > directory.nSpecial || isZero(directory.specialSlot(index)) {
+			continue
+		}
+		if _, ok := blobs[uint32(index)]; !ok {
+			return fmt.Errorf("code directory seals %[1]s, but the signature has no %[1]s blob", specialSlotName(index))
 		}
 	}
 	if !inputs.bundle {

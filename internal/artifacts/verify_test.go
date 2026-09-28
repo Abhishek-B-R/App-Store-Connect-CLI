@@ -100,6 +100,14 @@ func TestVerifyIPAAcceptsValidSignature(t *testing.T) {
 	}
 }
 
+func TestVerifyIPAAcceptsSealedLaunchConstraint(t *testing.T) {
+	chain := artifactstest.NewTrustChain(t, validFrom, validUntil)
+	options := sealedOptions(&chain)
+	options.LaunchConstraint = []byte{0x70, 0x00}
+	ipa := verificationIPA(t, artifactstest.SignedMachO(t, options), zip.Deflate, nil)
+	expectVerification(t, verifyIPA(t, ipa, testPolicy(chain)), VerificationValid, "chain to Test Root CA verified at current time")
+}
+
 func TestVerifyIPAAcceptsBoundAlternateCodeDirectories(t *testing.T) {
 	chain := artifactstest.NewTrustChain(t, validFrom, validUntil)
 	options := sealedOptions(&chain)
@@ -126,6 +134,11 @@ func TestVerifyIPARejectsTampering(t *testing.T) {
 		tampered[offset] ^= 0x01
 		return tampered
 	}
+	withOptions := func(change func(*artifactstest.CodeSignatureOptions)) []byte {
+		options := sealedOptions(&chain)
+		change(&options)
+		return artifactstest.SignedMachO(t, options)
+	}
 	tests := map[string]struct {
 		executable []byte
 		overrides  map[string][]byte
@@ -140,6 +153,12 @@ func TestVerifyIPARejectsTampering(t *testing.T) {
 		"unsealed Info.plist":    {executable: artifactstest.SignedMachO(t, artifactstest.CodeSignatureOptions{Chain: &chain, CodeResources: testCodeResources}), detail: "bundle Info.plist is not sealed"},
 		"unsealed CodeResources": {executable: artifactstest.SignedMachO(t, artifactstest.CodeSignatureOptions{Chain: &chain, InfoPlist: testInfoPlist}), detail: "bundle CodeResources is not sealed"},
 		"missing sealed file":    {executable: signed, overrides: map[string][]byte{"Payload/Demo.app/_CodeSignature/CodeResources": nil}, detail: "seals CodeResources, but the bundle has none"},
+		"stripped requirements":  {executable: withOptions(func(options *artifactstest.CodeSignatureOptions) { options.OmitBlobs = []uint32{2} }), detail: "code directory seals requirements, but the signature has no requirements blob"},
+		"stripped entitlements":  {executable: withOptions(func(options *artifactstest.CodeSignatureOptions) { options.OmitBlobs = []uint32{5} }), detail: "code directory seals entitlements, but the signature has no entitlements blob"},
+		"stripped launch constraint": {executable: withOptions(func(options *artifactstest.CodeSignatureOptions) {
+			options.LaunchConstraint = []byte{0x70, 0x00}
+			options.OmitBlobs = []uint32{8}
+		}), detail: "code directory seals self launch constraint, but the signature has no self launch constraint blob"},
 	}
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
