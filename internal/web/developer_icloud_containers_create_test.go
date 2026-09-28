@@ -8,6 +8,9 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -29,11 +32,12 @@ type iCloudCreatePortal struct {
 	meta       string
 	createHook func(w http.ResponseWriter, r *http.Request, body []byte)
 	creates    int
+	teamID     string
 }
 
 func newICloudCreatePortal(t *testing.T) *iCloudCreatePortal {
 	t.Helper()
-	p := &iCloudCreatePortal{t: t}
+	p := &iCloudCreatePortal{t: t, teamID: "TEAM123456"}
 	p.server = httptest.NewServer(http.HandlerFunc(p.serve))
 	t.Cleanup(p.server.Close)
 	return p
@@ -55,11 +59,11 @@ func (p *iCloudCreatePortal) serve(w http.ResponseWriter, r *http.Request) {
 	case r.Method == http.MethodPost && r.URL.Path == developerPortalTeamsPath:
 		w.Header().Set("csrf", "csrf-token")
 		w.Header().Set("csrf_ts", "csrf-ts")
-		_, _ = io.WriteString(w, developerPortalTeamsFixture())
+		_, _ = fmt.Fprintf(w, `{"teams":[{"teamId":%q,"name":"Example Team","status":"active"}]}`, p.teamID)
 	case r.Method == http.MethodPost && r.URL.Path == developerServicesPath+"/cloudContainers" && override == http.MethodGet:
 		var request developerPortalProxyReadRequest
-		if err := json.Unmarshal(body, &request); err != nil || request.TeamID != "TEAM123456" {
-			p.t.Errorf("list body = %s (err %v), want teamId TEAM123456", body, err)
+		if err := json.Unmarshal(body, &request); err != nil || request.TeamID != p.teamID {
+			p.t.Errorf("list body = %s (err %v), want teamId %s", body, err, p.teamID)
 		}
 		rows := p.visible
 		if r.URL.Query().Get("filter[AND][hidden]") == "true" {
@@ -307,5 +311,74 @@ func TestValidateDeveloperICloudContainerIdentifierAcceptsReverseDNS(t *testing.
 		if err := ValidateDeveloperICloudContainerIdentifier(identifier); err != nil {
 			t.Errorf("ValidateDeveloperICloudContainerIdentifier(%q) = %v", identifier, err)
 		}
+	}
+}
+
+// iCloudContainerCreateCapture is the live create accepted by Apple on
+// 2026-09-29 (testdata/icloud_container_create_capture.json). Its provenance
+// block records which fields were captured and which are inferred.
+type iCloudContainerCreateCapture struct {
+	Request struct {
+		Method string          `json:"method"`
+		Path   string          `json:"path"`
+		Body   json.RawMessage `json:"body"`
+	} `json:"request"`
+	CreateStatus     int             `json:"createStatus"`
+	ReadBackResource json.RawMessage `json:"readBackResource"`
+}
+
+func loadICloudContainerCreateCapture(t *testing.T) iCloudContainerCreateCapture {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join("testdata", "icloud_container_create_capture.json"))
+	if err != nil {
+		t.Fatalf("read iCloud container create capture: %v", err)
+	}
+	var capture iCloudContainerCreateCapture
+	if err := json.Unmarshal(raw, &capture); err != nil {
+		t.Fatalf("decode iCloud container create capture: %v", err)
+	}
+	return capture
+}
+
+func TestCreateDeveloperICloudContainerMatchesLiveCapture(t *testing.T) {
+	capture := loadICloudContainerCreateCapture(t)
+	var want any
+	if err := json.Unmarshal(capture.Request.Body, &want); err != nil {
+		t.Fatalf("decode captured request body: %v", err)
+	}
+	for _, responseBody := range []struct{ name, body string }{
+		{"inferred resource body", `{"data":` + string(capture.ReadBackResource) + `}`},
+		{"empty body", ""},
+	} {
+		t.Run(responseBody.name, func(t *testing.T) {
+			portal := newICloudCreatePortal(t)
+			portal.createHook = func(w http.ResponseWriter, r *http.Request, body []byte) {
+				if r.Method != capture.Request.Method || r.URL.Path != capture.Request.Path {
+					t.Errorf("create transport = %s %s, want captured %s %s", r.Method, r.URL.Path, capture.Request.Method, capture.Request.Path)
+				}
+				var got any
+				if err := json.Unmarshal(body, &got); err != nil {
+					t.Fatalf("decode create body: %v", err)
+				}
+				if !reflect.DeepEqual(got, want) {
+					t.Errorf("create body = %s, want captured %s", body, capture.Request.Body)
+				}
+				portal.visible = []string{string(capture.ReadBackResource)}
+				w.WriteHeader(capture.CreateStatus)
+				_, _ = io.WriteString(w, responseBody.body)
+			}
+			portal.teamID = "YQZQG7N4WG"
+			result, err := portal.client().CreateDeveloperICloudContainer(context.Background(), DeveloperICloudContainerCreateRequest{
+				Identifier: "iCloud.com.rorkai.asc.capture.t1790620906",
+				Name:       "asc capture container",
+			})
+			if err != nil {
+				t.Fatalf("CreateDeveloperICloudContainer() error: %v", err)
+			}
+			if result.ContainerID != "7PU5FAD3YR" || result.Prefix != "YQZQG7N4WG" || result.Name != "asc capture container" ||
+				result.RequestedName != "" || result.Hidden || !result.Verified || !result.Permanent || result.Status != "created" {
+				t.Fatalf("unexpected receipt: %+v", result)
+			}
+		})
 	}
 }
