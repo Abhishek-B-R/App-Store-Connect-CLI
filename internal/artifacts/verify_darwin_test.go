@@ -51,7 +51,7 @@ func TestVerifyMachOAgreesWithCodesignOnSystemBinary(t *testing.T) {
 	// Flip one byte of code inside the first slice's signed pages.
 	tampered := append([]byte(nil), data...)
 	capture := &signatureCapture{}
-	if _, _, err := readMachOSignatureCapture(bytes.NewReader(data), int64(len(data)), capture); err != nil {
+	if _, err := readMachOSignatureCapture(bytes.NewReader(data), int64(len(data)), capture); err != nil {
 		t.Fatal(err)
 	}
 	offset := capture.base + 0x2000
@@ -99,7 +99,7 @@ func TestVerifyXarAgreesWithPkgutil(t *testing.T) {
 		t.Fatalf("pkgutil accepts the package but verification=%+v", result)
 	}
 
-	document, _, err := readXarFiles(bytes.NewReader(data), int64(len(data)))
+	document, _, _, err := readXarFiles(bytes.NewReader(data), int64(len(data)))
 	if err != nil || document.Signature == nil {
 		t.Fatalf("document=%+v err=%v", document, err)
 	}

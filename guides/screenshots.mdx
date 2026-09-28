@@ -310,6 +310,11 @@ Supported devices:
 * Apple TV: `apple-tv`
 * Mac: `mac` (canvas without a bezel)
 
+Frame each device from a capture of the same screen shape, such as a 422x514
+Apple Watch Ultra 3 capture for `watch-ultra-3`. When an input's aspect ratio
+differs from the device screen by more than 2%, `asc screenshots frame` prints a
+warning on stderr, because the image is letterboxed inside the screen.
+
 Each device entry lists its `frameColors`; pass one with `--frame-color`. See [Frame Screenshots](/commands/screenshots#frame-screenshots) for the full device and color matrix.
 
 To frame a whole directory and retry only failed inputs on the next run:
@@ -318,6 +323,18 @@ To frame a whole directory and retry only failed inputs on the next run:
 asc screenshots frame --input-dir ./screenshots/raw --output-dir ./screenshots/framed \
   --device ipad-air-13 --frame-color blue --title "Plan every trip" --resume
 ```
+
+To keep captions legible on a busy or light background and use a brand font file that is not installed on the machine (for example, a CI runner), add a text box and pass the font file to `--font`:
+
+```bash  theme={null}
+asc screenshots frame --input-dir ./screenshots/raw --output-dir ./screenshots/framed \
+  --device iphone-air --title "Plan every trip" --bg-color "#f2c14e" \
+  --font ./brand/Brand-Bold.ttf --text-box --text-box-color "#1b3a5bcc"
+```
+
+Per-file box settings go in `--overlay-config` entries as `textBox`, `textBoxColor`, `textBoxPadding`, and `textBoxRadius`. See [Frame Screenshots](/commands/screenshots#frame-screenshots) for the defaults and validation rules.
+
+Large batches are CPU-bound. Add `--parallel-workers 4` (up to your CPU count) to render four inputs at once; the receipt order and `--resume` behavior stay the same.
 
 ## Complete Screenshot Workflow Example
 

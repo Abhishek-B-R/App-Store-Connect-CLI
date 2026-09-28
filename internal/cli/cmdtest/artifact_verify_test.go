@@ -115,3 +115,105 @@ func TestRunPKGInfoVerifiesAppleSignedPackage(t *testing.T) {
 		t.Fatalf("exit=%d receipt=%+v stderr=%q", exit, receipt, stderr)
 	}
 }
+
+func TestRunIPAInfoVerifySignatureChecksPrimaryUniversalSlice(t *testing.T) {
+	isolateArtifactCommandEnv(t)
+	chain := artifactstest.NewTrustChain(t, time.Now().Add(-time.Hour), time.Now().AddDate(1, 0, 0))
+	infoPlist := `<plist version="1.0"><dict><key>CFBundleIdentifier</key><string>com.example.demo</string><key>CFBundleExecutable</key><string>Demo</string></dict></plist>`
+	options := artifactstest.CodeSignatureOptions{Chain: &chain, InfoPlist: []byte(infoPlist)}
+	signed := artifactstest.SignedMachO(t, options)
+	tampered := artifactstest.SignedMachO(t, options)
+	tampered[5000] ^= 0x01
+	writeIPA := func(name string, executable []byte) string {
+		path := filepath.Join(t.TempDir(), name)
+		writeArtifactZip(t, path, map[string]string{
+			"Payload/Demo.app/Info.plist":               infoPlist,
+			"Payload/Demo.app/Demo":                     string(executable),
+			"Payload/Demo.app/embedded.mobileprovision": `<plist version="1.0"><dict><key>Entitlements</key><dict/></dict></plist>`,
+		})
+		return path
+	}
+	type receipt struct {
+		SignatureVerification       string `json:"signatureVerification"`
+		SignatureVerificationDetail string `json:"signatureVerificationDetail"`
+		CodeSignature               string `json:"codeSignature"`
+		Architectures               []struct {
+			Arch          string `json:"arch"`
+			CodeSignature string `json:"codeSignature"`
+		} `json:"architectures"`
+		SignerConsistent *bool `json:"signerConsistent"`
+	}
+	tests := []struct {
+		name   string
+		first  []byte
+		second []byte
+		status string
+		detail string
+	}{
+		// The tampered slice is not verified, so the primary slice reaches the chain check.
+		{"signed primary", signed, tampered, "untrusted-chain", "does not chain to an embedded Apple root"},
+		{"tampered primary", tampered, signed, "invalid", "code page 1 does not match"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			path := writeIPA("universal.ipa", artifactstest.UniversalMachO(
+				false,
+				artifactstest.FatSlice{CPUType: artifactstest.CPUTypeARM64, Data: test.first},
+				artifactstest.FatSlice{CPUType: artifactstest.CPUTypeX86_64, CPUSubtype: 3, Data: test.second},
+			))
+			var exit int
+			stdout, stderr := captureOutput(t, func() {
+				exit = cmd.Run([]string{"ipa-info", "--path", path, "--verify-signature", "--output", "json"}, "test")
+			})
+			var got receipt
+			if err := json.Unmarshal([]byte(stdout), &got); err != nil {
+				t.Fatalf("stdout=%q stderr=%q: %v", stdout, stderr, err)
+			}
+			if exit != cmd.ExitError || got.SignatureVerification != test.status || !strings.Contains(got.SignatureVerificationDetail, test.detail) {
+				t.Fatalf("exit=%d receipt=%+v stderr=%q", exit, got, stderr)
+			}
+			if got.CodeSignature != "signed" || len(got.Architectures) != 2 || got.Architectures[0].Arch != "arm64" || got.Architectures[1].Arch != "x86_64" ||
+				got.Architectures[0].CodeSignature != "signed" || got.Architectures[1].CodeSignature != "signed" || got.SignerConsistent == nil || !*got.SignerConsistent {
+				t.Fatalf("receipt=%+v", got)
+			}
+		})
+	}
+}
+
+func TestRunPKGInfoVerifySignatureCoversProductArchiveTOC(t *testing.T) {
+	isolateArtifactCommandEnv(t)
+	chain := artifactstest.NewTrustChain(t, time.Now().Add(-time.Hour), time.Now().AddDate(1, 0, 0))
+	files := map[string][]byte{
+		"Distribution":         []byte(`<installer-gui-script minSpecVersion="2"><product id="com.example.demo" version="2.3.4"/><pkg-ref id="com.example.demo" version="2.3.4">#Demo.pkg</pkg-ref></installer-gui-script>`),
+		"Demo.pkg/PackageInfo": []byte(`<pkg-info identifier="com.example.demo" version="2.3.4" install-location="/Applications"/>`),
+	}
+	path := filepath.Join(t.TempDir(), "Demo.pkg")
+	if err := os.WriteFile(path, artifactstest.SignedXar(t, files, chain, time.Now()), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var exit int
+	stdout, stderr := captureOutput(t, func() {
+		exit = cmd.Run([]string{"pkg-info", "--path", path, "--verify-signature", "--output", "json"}, "test")
+	})
+	var got struct {
+		SignatureVerification       string `json:"signatureVerification"`
+		SignatureVerificationDetail string `json:"signatureVerificationDetail"`
+		Status                      string `json:"status"`
+		ProductID                   string `json:"productId"`
+		PackageSignature            string `json:"packageSignature"`
+		Components                  []struct {
+			Path    string `json:"path"`
+			Primary bool   `json:"primary"`
+		} `json:"components"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &got); err != nil {
+		t.Fatalf("stdout=%q stderr=%q: %v", stdout, stderr, err)
+	}
+	if exit != cmd.ExitError || got.Status != "readable" || got.ProductID != "com.example.demo" || got.PackageSignature != "signed" ||
+		len(got.Components) != 1 || got.Components[0].Path != "Demo.pkg" || !got.Components[0].Primary {
+		t.Fatalf("exit=%d receipt=%+v stderr=%q", exit, got, stderr)
+	}
+	if got.SignatureVerification != "untrusted-chain" || !strings.Contains(got.SignatureVerificationDetail, "RSA signature verified") {
+		t.Fatalf("receipt=%+v", got)
+	}
+}

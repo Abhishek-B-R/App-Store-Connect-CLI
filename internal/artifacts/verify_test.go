@@ -215,7 +215,7 @@ func TestVerifyPKG(t *testing.T) {
 	}
 	expectVerification(t, verify(valid, policy), VerificationValid, "chain to Test Root CA verified at current time")
 
-	document, _, err := readXarFiles(bytes.NewReader(valid), int64(len(valid)))
+	document, _, _, err := readXarFiles(bytes.NewReader(valid), int64(len(valid)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -233,7 +233,7 @@ func TestVerifyPKG(t *testing.T) {
 
 	// A table of contents rewritten after signing no longer matches the checksum.
 	resigned := artifactstest.SignedXar(t, map[string][]byte{"PackageInfo": []byte(`<pkg-info version="10.0" identifier="com.example.pkg"/>`)}, chain, time.Now())
-	resignedDocument, _, _ := readXarFiles(bytes.NewReader(resigned), int64(len(resigned)))
+	resignedDocument, _, _, _ := readXarFiles(bytes.NewReader(resigned), int64(len(resigned)))
 	resignedChecksum, _ := verifiedXarChecksum(bytes.NewReader(resigned), int64(len(resigned)), resignedDocument)
 	swapped := append(append([]byte(nil), resigned[:resignedChecksum.heap]...), valid[checksum.heap:]...)
 	expectVerification(t, verify(swapped, policy), VerificationInvalid, "checksum does not match")

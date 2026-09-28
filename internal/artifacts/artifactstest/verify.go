@@ -16,8 +16,6 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"math/big"
-	"sort"
-	"strconv"
 	"testing"
 	"time"
 
@@ -238,27 +236,17 @@ func codeSigningCMS(t testing.TB, chain TrustChain, directories [][]byte, hashTy
 }
 
 // SignedXar builds a flat package whose table of contents is checksummed with
-// SHA-1 and signed with the chain's RSA leaf, as productsign does.
+// SHA-1 and signed with the chain's RSA leaf, as productsign does. Member names
+// may contain "/" to place files in directories, as in a product archive.
 func SignedXar(t testing.TB, files map[string][]byte, chain TrustChain, created time.Time) []byte {
 	t.Helper()
-	names := make([]string, 0, len(files))
-	for name := range files {
-		names = append(names, name)
-	}
-	sort.Strings(names)
 	const checksumSize, signatureSize = 20, 256
-	var heap, filesXML bytes.Buffer
-	for id, name := range names {
-		data := files[name]
-		offset := checksumSize + signatureSize + heap.Len()
-		heap.Write(data)
-		filesXML.WriteString(`<file id="` + strconv.Itoa(id+1) + `"><name>` + name + `</name><type>file</type><data><length>` + strconv.Itoa(len(data)) + `</length><offset>` + strconv.Itoa(offset) + `</offset><size>` + strconv.Itoa(len(data)) + `</size><encoding style="application/octet-stream"/></data></file>`)
-	}
+	filesXML, heap := xarTreeFiles(files, checksumSize+signatureSize)
 	toc := `<xar><toc><checksum style="sha1"><offset>0</offset><size>20</size></checksum>` +
 		`<creation-time>` + created.UTC().Format("2006-01-02T15:04:05") + `</creation-time>` +
 		`<signature style="RSA"><offset>20</offset><size>256</size><KeyInfo xmlns="http://www.w3.org/2000/09/xmldsig#"><X509Data><X509Certificate>` +
 		wrapBase64(chain.Leaf.Raw) + `</X509Certificate><X509Certificate>` + wrapBase64(chain.Intermediate.Raw) +
-		`</X509Certificate></X509Data></KeyInfo></signature>` + filesXML.String() + `</toc></xar>`
+		`</X509Certificate></X509Data></KeyInfo></signature>` + filesXML + `</toc></xar>`
 	var compressed bytes.Buffer
 	encoder := zlib.NewWriter(&compressed)
 	if _, err := encoder.Write([]byte(toc)); err != nil {
@@ -282,5 +270,5 @@ func SignedXar(t testing.TB, files map[string][]byte, chain TrustChain, created 
 	out := append(header, compressed.Bytes()...)
 	out = append(out, checksum[:]...)
 	out = append(out, signature...)
-	return append(out, heap.Bytes()...)
+	return append(out, heap...)
 }

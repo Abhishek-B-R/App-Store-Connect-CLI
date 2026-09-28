@@ -7,6 +7,7 @@ import (
 	"crypto/subtle"
 	"encoding/asn1"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"hash"
 	"io"
@@ -32,12 +33,27 @@ var (
 	oidAppleCDHashes2 = asn1.ObjectIdentifier{1, 2, 840, 113635, 100, 9, 2}
 )
 
-// signatureCapture keeps the code signature of the Mach-O slice that
-// readMachOSignature classified, so it can be verified afterwards.
+// signatureCapture keeps the code signature of the primary Mach-O slice, the
+// one stored first, so it can be verified afterwards.
 type signatureCapture struct {
 	base      int64
 	sliceSize int64
 	superblob []byte
+}
+
+// readMachOSignatureCapture classifies every slice, keeps the primary slice's
+// code signature in capture, and returns the primary slice's classification.
+// A non-nil error always comes with SignatureUnreadable.
+func readMachOSignatureCapture(source io.Reader, size int64, capture *signatureCapture) (string, error) {
+	slices, primary, err := readMachOSignaturesCapture(source, size, capture)
+	if err != nil {
+		return SignatureUnreadable, err
+	}
+	slice := slices[primary]
+	if slice.CodeSignatureError != "" {
+		return SignatureUnreadable, errors.New(slice.CodeSignatureError)
+	}
+	return slice.CodeSignature, nil
 }
 
 func captureSuperblob(reader *forwardReader, base, sliceSize, dataSize int64) (string, *SignerIdentity, error) {
@@ -541,7 +557,7 @@ func openExecutable(source io.ReaderAt, file *zip.File) (io.ReadCloser, error) {
 // verifyMachOBytes verifies a standalone Mach-O executable outside a bundle.
 func verifyMachOBytes(data []byte, policy *trustPolicy) SignatureVerification {
 	capture := &signatureCapture{}
-	status, _, err := readMachOSignatureCapture(bytes.NewReader(data), int64(len(data)), capture)
+	status, err := readMachOSignatureCapture(bytes.NewReader(data), int64(len(data)), capture)
 	return verifyCodeSignature(codeSignatureInputs{
 		status:   status,
 		readErr:  err,

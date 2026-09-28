@@ -9,6 +9,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 	"time"
 
@@ -57,17 +58,34 @@ type SignerIdentity struct {
 	SHA256Fingerprint string
 }
 
+// ArchitectureSignature is the code signature of one Mach-O architecture
+// slice. CPUType and CPUSubtype are the raw values from the universal header,
+// or from the Mach-O header of a thin executable.
+type ArchitectureSignature struct {
+	CPUType            uint32
+	CPUSubtype         uint32
+	Arch               string
+	CodeSignature      string
+	CodeSignatureError string
+	Signer             *SignerIdentity
+}
+
 // forwardReader reads a stream in increasing offset order. Seekable sources skip
-// without reading; others discard the skipped bytes.
+// without reading; others discard the skipped bytes. After an I/O failure the
+// stream position is unknown, so every later call returns that failure.
 type forwardReader struct {
 	source io.Reader
 	pos    int64
 	size   int64
-	// capture, when set, receives the classified slice's code signature.
+	err    error
+	// capture, when set, receives the primary slice's code signature.
 	capture *signatureCapture
 }
 
 func (reader *forwardReader) skipTo(offset int64) error {
+	if reader.err != nil {
+		return reader.err
+	}
 	if offset < reader.pos {
 		return fmt.Errorf("Mach-O signature offsets are out of order")
 	}
@@ -77,9 +95,11 @@ func (reader *forwardReader) skipTo(offset int64) error {
 	distance := offset - reader.pos
 	if seeker, ok := reader.source.(io.Seeker); ok {
 		if _, err := seeker.Seek(distance, io.SeekCurrent); err != nil {
+			reader.err = err
 			return err
 		}
 	} else if _, err := io.CopyN(io.Discard, reader.source, distance); err != nil {
+		reader.err = err
 		return err
 	}
 	reader.pos = offset
@@ -87,55 +107,77 @@ func (reader *forwardReader) skipTo(offset int64) error {
 }
 
 func (reader *forwardReader) read(length int64) ([]byte, error) {
+	if reader.err != nil {
+		return nil, reader.err
+	}
 	if length < 0 || length > reader.size-reader.pos {
 		return nil, fmt.Errorf("Mach-O executable is truncated")
 	}
 	data := make([]byte, int(length))
 	if _, err := io.ReadFull(reader.source, data); err != nil {
-		return nil, fmt.Errorf("Mach-O executable is truncated: %w", err)
+		reader.err = fmt.Errorf("Mach-O executable is truncated: %w", err)
+		return nil, reader.err
 	}
 	reader.pos += length
 	return data, nil
 }
 
-// readMachOSignature classifies the code signature of a thin or universal
-// Mach-O executable and extracts the CMS signer's leaf certificate. For a
-// universal binary it reads the slice stored first, so the source is consumed
-// once, front to back. A non-nil error always comes with SignatureUnreadable.
-func readMachOSignature(source io.Reader, size int64) (string, *SignerIdentity, error) {
-	return readMachOSignatureCapture(source, size, nil)
+// readMachOSignatures classifies every architecture slice of a thin or
+// universal Mach-O executable and extracts each CMS signer's leaf certificate.
+// Slices are returned in universal header order; primary indexes the slice
+// stored first. The source is consumed once, front to back, so slices are read
+// in file order. A slice that cannot be read is reported as unreadable; an
+// error means no slice could be identified.
+func readMachOSignatures(source io.Reader, size int64) ([]ArchitectureSignature, int, error) {
+	return readMachOSignaturesCapture(source, size, nil)
 }
 
-// readMachOSignatureCapture is readMachOSignature that also keeps the code
-// signature in capture when capture is non-nil.
-func readMachOSignatureCapture(source io.Reader, size int64, capture *signatureCapture) (string, *SignerIdentity, error) {
-	status, signer, err := readMachOSignatureStream(&forwardReader{source: source, size: size, capture: capture})
-	if err != nil {
-		return SignatureUnreadable, nil, err
-	}
-	return status, signer, nil
-}
-
-func readMachOSignatureStream(reader *forwardReader) (string, *SignerIdentity, error) {
+// readMachOSignaturesCapture is readMachOSignatures that also keeps the
+// primary slice's code signature in capture when capture is non-nil.
+func readMachOSignaturesCapture(source io.Reader, size int64, capture *signatureCapture) ([]ArchitectureSignature, int, error) {
+	reader := &forwardReader{source: source, size: size, capture: capture}
 	magic, err := reader.read(4)
 	if err != nil {
-		return "", nil, err
+		return nil, 0, err
 	}
 	switch binary.BigEndian.Uint32(magic) {
 	case 0xcafebabe, 0xcafebabf:
-		return readFatSignature(reader, binary.BigEndian.Uint32(magic) == 0xcafebabf)
+		return readFatSignatures(reader, binary.BigEndian.Uint32(magic) == 0xcafebabf)
 	}
-	return readThinSignature(reader, magic, 0, reader.size)
+	header, err := readThinHeader(reader, magic, reader.size)
+	if err != nil {
+		return nil, 0, err
+	}
+	slice := newArchitectureSignature(header.cpuType, header.cpuSubtype)
+	slice.record(readThinSignature(reader, header, 0, reader.size))
+	return []ArchitectureSignature{slice}, 0, nil
 }
 
-func readFatSignature(reader *forwardReader, wide bool) (string, *SignerIdentity, error) {
+func newArchitectureSignature(cpuType, cpuSubtype uint32) ArchitectureSignature {
+	return ArchitectureSignature{CPUType: cpuType, CPUSubtype: cpuSubtype, Arch: architectureName(cpuType, cpuSubtype)}
+}
+
+func (slice *ArchitectureSignature) record(status string, signer *SignerIdentity, err error) {
+	if err != nil {
+		slice.CodeSignature, slice.CodeSignatureError, slice.Signer = SignatureUnreadable, err.Error(), nil
+		return
+	}
+	slice.CodeSignature, slice.Signer = status, signer
+}
+
+type fatArchitecture struct {
+	cpuType, cpuSubtype uint32
+	offset, size        int64
+}
+
+func readFatSignatures(reader *forwardReader, wide bool) ([]ArchitectureSignature, int, error) {
 	countBytes, err := reader.read(4)
 	if err != nil {
-		return "", nil, err
+		return nil, 0, err
 	}
 	count := binary.BigEndian.Uint32(countBytes)
 	if count == 0 || count > maxFatArchitectures {
-		return "", nil, fmt.Errorf("universal binary declares %d architectures", count)
+		return nil, 0, fmt.Errorf("universal binary declares %d architectures", count)
 	}
 	entrySize := int64(20)
 	if wide {
@@ -143,11 +185,11 @@ func readFatSignature(reader *forwardReader, wide bool) (string, *SignerIdentity
 	}
 	table, err := reader.read(int64(count) * entrySize)
 	if err != nil {
-		return "", nil, err
+		return nil, 0, err
 	}
-	first, firstSize := uint64(0), uint64(0)
-	for index := range int64(count) {
-		entry := table[index*entrySize:]
+	architectures := make([]fatArchitecture, count)
+	for index := range architectures {
+		entry := table[int64(index)*entrySize:]
 		var offset, sliceSize uint64
 		if wide {
 			offset, sliceSize = binary.BigEndian.Uint64(entry[8:16]), binary.BigEndian.Uint64(entry[16:24])
@@ -155,43 +197,98 @@ func readFatSignature(reader *forwardReader, wide bool) (string, *SignerIdentity
 			offset, sliceSize = uint64(binary.BigEndian.Uint32(entry[8:12])), uint64(binary.BigEndian.Uint32(entry[12:16]))
 		}
 		if offset < uint64(reader.pos) || offset > uint64(reader.size) || sliceSize > uint64(reader.size)-offset {
-			return "", nil, fmt.Errorf("universal binary slice is outside the executable")
+			return nil, 0, fmt.Errorf("universal binary slice is outside the executable")
 		}
-		if index == 0 || offset < first {
-			first, firstSize = offset, sliceSize
+		architectures[index] = fatArchitecture{
+			cpuType:    binary.BigEndian.Uint32(entry[0:4]),
+			cpuSubtype: binary.BigEndian.Uint32(entry[4:8]),
+			offset:     int64(offset),
+			size:       int64(sliceSize),
 		}
 	}
-	if err := reader.skipTo(int64(first)); err != nil {
+	// Read slices in file order so the source is consumed front to back.
+	order := make([]int, count)
+	for index := range order {
+		order[index] = index
+	}
+	sort.SliceStable(order, func(a, b int) bool { return architectures[order[a]].offset < architectures[order[b]].offset })
+	for index := 1; index < len(order); index++ {
+		previous, next := architectures[order[index-1]], architectures[order[index]]
+		if previous.offset+previous.size > next.offset {
+			return nil, 0, fmt.Errorf("universal binary slices overlap")
+		}
+	}
+	slices := make([]ArchitectureSignature, count)
+	for position, index := range order {
+		if position == 1 {
+			// Only the primary slice, stored first, is captured for verification.
+			reader.capture = nil
+		}
+		architecture := architectures[index]
+		slices[index] = newArchitectureSignature(architecture.cpuType, architecture.cpuSubtype)
+		slices[index].record(readFatSlice(reader, architecture))
+	}
+	return slices, order[0], nil
+}
+
+func readFatSlice(reader *forwardReader, architecture fatArchitecture) (string, *SignerIdentity, error) {
+	if err := reader.skipTo(architecture.offset); err != nil {
 		return "", nil, err
+	}
+	if architecture.size < 4 {
+		return "", nil, fmt.Errorf("universal binary slice is truncated")
 	}
 	magic, err := reader.read(4)
 	if err != nil {
 		return "", nil, err
 	}
-	return readThinSignature(reader, magic, int64(first), int64(firstSize))
-}
-
-func readThinSignature(reader *forwardReader, magic []byte, base, sliceSize int64) (string, *SignerIdentity, error) {
-	var order binary.ByteOrder
-	var headerSize int64
-	switch {
-	case binary.LittleEndian.Uint32(magic) == 0xfeedface:
-		order, headerSize = binary.LittleEndian, 28
-	case binary.LittleEndian.Uint32(magic) == 0xfeedfacf:
-		order, headerSize = binary.LittleEndian, 32
-	case binary.BigEndian.Uint32(magic) == 0xfeedface:
-		order, headerSize = binary.BigEndian, 28
-	case binary.BigEndian.Uint32(magic) == 0xfeedfacf:
-		order, headerSize = binary.BigEndian, 32
-	default:
-		return "", nil, fmt.Errorf("main executable is not a Mach-O file")
-	}
-	header, err := reader.read(headerSize - 4)
+	header, err := readThinHeader(reader, magic, architecture.size)
 	if err != nil {
 		return "", nil, err
 	}
-	commandCount := int64(order.Uint32(header[12:16]))
-	commandBytes := int64(order.Uint32(header[16:20]))
+	return readThinSignature(reader, header, architecture.offset, architecture.size)
+}
+
+type thinHeader struct {
+	order                      binary.ByteOrder
+	size                       int64
+	cpuType, cpuSubtype        uint32
+	commandCount, commandBytes int64
+}
+
+// readThinHeader reads a Mach-O header whose magic has already been consumed.
+// Every read stays inside the slice.
+func readThinHeader(reader *forwardReader, magic []byte, sliceSize int64) (thinHeader, error) {
+	var header thinHeader
+	switch {
+	case binary.LittleEndian.Uint32(magic) == 0xfeedface:
+		header.order, header.size = binary.LittleEndian, 28
+	case binary.LittleEndian.Uint32(magic) == 0xfeedfacf:
+		header.order, header.size = binary.LittleEndian, 32
+	case binary.BigEndian.Uint32(magic) == 0xfeedface:
+		header.order, header.size = binary.BigEndian, 28
+	case binary.BigEndian.Uint32(magic) == 0xfeedfacf:
+		header.order, header.size = binary.BigEndian, 32
+	default:
+		return header, fmt.Errorf("main executable is not a Mach-O file")
+	}
+	if header.size > sliceSize {
+		return header, fmt.Errorf("Mach-O executable is truncated")
+	}
+	raw, err := reader.read(header.size - 4)
+	if err != nil {
+		return header, err
+	}
+	header.cpuType = header.order.Uint32(raw[0:4])
+	header.cpuSubtype = header.order.Uint32(raw[4:8])
+	header.commandCount = int64(header.order.Uint32(raw[12:16]))
+	header.commandBytes = int64(header.order.Uint32(raw[16:20]))
+	return header, nil
+}
+
+func readThinSignature(reader *forwardReader, header thinHeader, base, sliceSize int64) (string, *SignerIdentity, error) {
+	order, headerSize := header.order, header.size
+	commandCount, commandBytes := header.commandCount, header.commandBytes
 	if commandBytes > maxLoadCommandBytes || commandBytes > sliceSize-headerSize || commandCount > commandBytes/8 {
 		return "", nil, fmt.Errorf("Mach-O load commands exceed the read limit")
 	}
