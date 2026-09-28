@@ -315,6 +315,21 @@ Apple Watch Ultra 3 capture for `watch-ultra-3`. When an input's aspect ratio
 differs from the device screen by more than 2%, `asc screenshots frame` prints a
 warning on stderr, because the image is letterboxed inside the screen.
 
+Native simulator captures from `xcrun simctl io <udid> screenshot` fill the
+frame without that warning:
+
+| Frame device | Simulator capture | Size |
+| --- | --- | --- |
+| `watch-series-11` | Apple Watch Series 11 or 12 (46mm) | 416x496 |
+| `watch-ultra-3` | Apple Watch Ultra 3 or 4 (49mm) | 422x514 |
+| `apple-tv` | Apple TV 4K | 3840x2160 |
+
+```bash  theme={null}
+xcrun simctl io "$WATCH_UDID" screenshot ./screenshots/raw/watch-home.png
+asc screenshots frame --input ./screenshots/raw/watch-home.png --device watch-ultra-3 \
+  --title "Roll the die" --text-position bottom
+```
+
 Each device entry lists its `frameColors`; pass one with `--frame-color`. See [Frame Screenshots](/commands/screenshots#frame-screenshots) for the full device and color matrix.
 
 To frame a whole directory and retry only failed inputs on the next run:
