@@ -319,6 +319,8 @@ asc screenshots frame --input-dir ./screenshots/raw --output-dir ./screenshots/f
   --device ipad-air-13 --frame-color blue --title "Plan every trip" --resume
 ```
 
+Large batches are CPU-bound. Add `--parallel-workers 4` (up to your CPU count) to render four inputs at once; the receipt order and `--resume` behavior stay the same.
+
 ## Complete Screenshot Workflow Example
 
 Here's a complete workflow for managing screenshots:

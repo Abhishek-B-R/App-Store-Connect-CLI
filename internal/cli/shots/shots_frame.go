@@ -8,8 +8,10 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/peterbourgon/ff/v3/ffcli"
@@ -32,6 +34,7 @@ var watchUnsupportedFrameFlags = []string{
 	"output-dir",
 	"output-path",
 	"overlay-config",
+	"parallel-workers",
 	"resume",
 	"subtitle",
 	"subtitle-color",
@@ -72,6 +75,7 @@ func ShotsFrameCommand() *ffcli.Command {
 	textPosition := fs.String("text-position", string(screenshots.TextPositionTop), "Title and subtitle placement: "+strings.Join(screenshots.TextPositionValues(), ", "))
 	overlayConfig := fs.String("overlay-config", "", "JSON overlay config with default and data[] title, keyword, and background entries")
 	resume := fs.Bool("resume", false, "Skip inputs whose source hash and render settings match .asc/reports/screenshots-frame/state.json")
+	parallelWorkers := fs.Int("parallel-workers", 1, "Frame up to N --input-dir screenshots at once (1 to the CPU count)")
 	output := shared.BindOutputFlags(fs)
 	watch := fs.Bool("watch", false, "Watch config and asset files for changes, auto-regenerate (requires --config)")
 	watchDebounce := fs.Duration("watch-debounce", 500*time.Millisecond, "Debounce delay between change detection and regeneration")
@@ -97,7 +101,9 @@ every device.
 
 With --input-dir, a failed input does not stop the batch: the receipt lists
 each input's status and the command exits 1 if any input failed. Add --resume
-to record completed inputs and skip them on the next run.
+to record completed inputs and skip them on the next run. Add
+--parallel-workers N to run up to N independent renders at once; receipts stay
+in input order.
 
 Use --watch with --config to start a live watcher that auto-regenerates
 framed screenshots whenever the YAML config or referenced raw assets change.`,
@@ -116,6 +122,7 @@ framed screenshots whenever the YAML config or referenced raw assets change.`,
 			watchReviewDirSet := false
 			watchRawDirSet := false
 			textPositionSet := false
+			parallelWorkersSet := false
 			// Watch mode regenerates straight from the Koubou YAML config, so
 			// the single-shot device, canvas and output flags have nowhere to
 			// apply. Collect the ones the caller set so they are rejected
@@ -132,6 +139,8 @@ framed screenshots whenever the YAML config or referenced raw assets change.`,
 					watchRawDirSet = true
 				case "text-position":
 					textPositionSet = true
+				case "parallel-workers":
+					parallelWorkersSet = true
 				}
 				if slices.Contains(watchUnsupportedFrameFlags, flagValue.Name) {
 					watchUnsupportedFlags = append(watchUnsupportedFlags, "--"+flagValue.Name)
@@ -161,6 +170,12 @@ framed screenshots whenever the YAML config or referenced raw assets change.`,
 			}
 			if inputDirSet && (inputSet || configSet) {
 				return shared.WithDiagnostic(shared.UsageError("use either --input, --input-dir, or --config"), shared.DiagnosticConflictingInput, "--input-dir")
+			}
+			if parallelWorkersSet && !inputDirSet {
+				return shared.WithDiagnostic(shared.UsageError("--parallel-workers requires --input-dir"), shared.DiagnosticConflictingInput, "--parallel-workers")
+			}
+			if maxWorkers := runtime.NumCPU(); *parallelWorkers < 1 || *parallelWorkers > maxWorkers {
+				return shared.WithDiagnostic(shared.UsageError(fmt.Sprintf("--parallel-workers must be between 1 and %d", maxWorkers)), shared.DiagnosticInvalidInput, "--parallel-workers")
 			}
 			if inputDirSet && (strings.TrimSpace(*outputPath) != "" || strings.TrimSpace(*name) != "") {
 				return shared.WithDiagnostic(shared.UsageError("--output-path and --name cannot be used with --input-dir; outputs are named <input>-<device>.png in --output-dir"), shared.DiagnosticConflictingInput, "--input-dir")
@@ -302,6 +317,7 @@ framed screenshots whenever the YAML config or referenced raw assets change.`,
 					inputDir:  inputDirVal,
 					outputDir: *outputDir,
 					resume:    *resume,
+					workers:   *parallelWorkers,
 					settings:  settings,
 					output:    *output.Output,
 					pretty:    *output.Pretty,
@@ -364,7 +380,8 @@ framed screenshots whenever the YAML config or referenced raw assets change.`,
 					openInput := func(ctx context.Context) (*screenshots.FrameInputSnapshot, error) {
 						return screenshots.OpenFrameInputSnapshot(ctx, request.InputPath)
 					}
-					result, frameErr := frameSnapshot(timeoutCtx, openInput, request, settings, &state, root, nil)
+					store := &frameResumeStore{state: &state, root: root}
+					result, frameErr := frameSnapshot(timeoutCtx, openInput, request, settings, store, nil)
 					if frameErr != nil {
 						return fmt.Errorf("screenshots frame: %w", frameErr)
 					}
@@ -456,12 +473,41 @@ func (settings frameRenderSettings) canvasFor(inputPath string) (*screenshots.Ca
 // the same bytes.
 type frameInputOpener func(context.Context) (*screenshots.FrameInputSnapshot, error)
 
+// frameResumeStore is the loaded resume state for one invocation. The caller
+// holds the cross-process resume lock; mu serializes the renders of one
+// --parallel-workers batch that read, record, and save it.
+type frameResumeStore struct {
+	mu    sync.Mutex
+	state *screenshots.FrameResumeState
+	root  rootfs.Root
+}
+
+// lookup returns the stored entry for outputPath as a one-entry state, so the
+// output can be verified without holding mu.
+func (store *frameResumeStore) lookup(outputPath string) screenshots.FrameResumeState {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	lookup := screenshots.FrameResumeState{Files: map[string]screenshots.FrameResumeEntry{}}
+	if entry, ok := store.state.Files[outputPath]; ok {
+		lookup.Files[outputPath] = entry
+	}
+	return lookup
+}
+
+// record stores a completed render and saves the whole state.
+func (store *frameResumeStore) record(outputPath string, entry screenshots.FrameResumeEntry) error {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	store.state.Files[outputPath] = entry
+	return screenshots.SaveFrameResumeState(store.root, screenshots.FrameResumeStateRel, *store.state)
+}
+
 // frameSnapshot renders a protected snapshot of the input opened by open.
-// With a non-nil state it skips the render when state records the same
-// fingerprint and output bytes, and saves state after a successful render;
-// the caller then holds the resume lock and owns state. A non-nil outputRoot
-// is the retained --output-dir the image is published into.
-func frameSnapshot(ctx context.Context, open frameInputOpener, request screenshots.FrameRequest, settings frameRenderSettings, state *screenshots.FrameResumeState, root rootfs.Root, outputRoot *rootfs.Root) (*screenshots.FrameResult, error) {
+// With a non-nil store it skips the render when the state records the same
+// fingerprint and output bytes, and saves the state after a successful
+// render. A non-nil outputRoot is the retained --output-dir the image is
+// published into.
+func frameSnapshot(ctx context.Context, open frameInputOpener, request screenshots.FrameRequest, settings frameRenderSettings, store *frameResumeStore, outputRoot *rootfs.Root) (*screenshots.FrameResult, error) {
 	snapshot, err := open(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("snapshot input: %w", err)
@@ -476,9 +522,9 @@ func frameSnapshot(ctx context.Context, open frameInputOpener, request screensho
 		return result, nil
 	}
 	fingerprint := ""
-	if state != nil {
+	if store != nil {
 		fingerprint = frameResumeFingerprint(snapshot.SourceHash(), settings, request.Canvas)
-		if result, ok := screenshots.ResumeEntry(ctx, *state, request.OutputPath, fingerprint); ok {
+		if result, ok := screenshots.ResumeEntry(ctx, store.lookup(request.OutputPath), request.OutputPath, fingerprint); ok {
 			return finish(&result, nil)
 		}
 	}
@@ -492,17 +538,17 @@ func frameSnapshot(ctx context.Context, open frameInputOpener, request screensho
 	if err != nil {
 		return finish(nil, err)
 	}
-	if state == nil {
+	if store == nil {
 		return finish(result, nil)
 	}
 	stored := *result
 	stored.Skipped = false
-	state.Files[request.OutputPath] = screenshots.FrameResumeEntry{
+	entry := screenshots.FrameResumeEntry{
 		Fingerprint: fingerprint,
 		OutputHash:  result.OutputHash,
 		Result:      stored,
 	}
-	if err := screenshots.SaveFrameResumeState(root, screenshots.FrameResumeStateRel, *state); err != nil {
+	if err := store.record(request.OutputPath, entry); err != nil {
 		return finish(nil, fmt.Errorf("write resume state: %w", err))
 	}
 	return finish(result, nil)
