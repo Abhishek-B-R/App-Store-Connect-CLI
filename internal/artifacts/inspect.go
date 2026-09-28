@@ -48,6 +48,14 @@ type IPAManifest struct {
 	CodeSignature      string
 	CodeSignatureError string
 	Signer             *SignerIdentity
+	// Architectures lists every slice of the main executable in universal
+	// header order; a thin executable has one. CodeSignature, CodeSignatureError,
+	// and Signer describe the slice stored first. It is nil when no slice could
+	// be identified.
+	Architectures []ArchitectureSignature
+	// SignerConsistent reports whether every slice has the same signature
+	// classification and signer. It is nil when Architectures is nil.
+	SignerConsistent *bool
 }
 
 // NestedBundle is an extension or App Clip inside the IPA.
@@ -168,7 +176,14 @@ func InspectIPA(source io.ReaderAt, size int64, includeEntitlements, includeProf
 		})
 	}
 	if executableErr == nil {
-		manifest.CodeSignature, manifest.Signer, executableErr = readExecutableSignature(source, executable)
+		var primary int
+		manifest.Architectures, primary, executableErr = readExecutableSignatures(source, executable)
+		if executableErr == nil {
+			slice := manifest.Architectures[primary]
+			manifest.CodeSignature, manifest.CodeSignatureError, manifest.Signer = slice.CodeSignature, slice.CodeSignatureError, slice.Signer
+			consistent := signersConsistent(manifest.Architectures)
+			manifest.SignerConsistent = &consistent
+		}
 	}
 	if executableErr != nil {
 		manifest.CodeSignature, manifest.Signer = SignatureUnreadable, nil
@@ -228,23 +243,23 @@ func mainExecutableMember(files []*zip.File, appRoot, name string) (*zip.File, e
 	return found, nil
 }
 
-func readExecutableSignature(source io.ReaderAt, file *zip.File) (string, *SignerIdentity, error) {
+func readExecutableSignatures(source io.ReaderAt, file *zip.File) ([]ArchitectureSignature, int, error) {
 	size := int64(file.UncompressedSize64)
 	if file.Method == zip.Store && file.CompressedSize64 == file.UncompressedSize64 {
 		// Stored members are addressable, so skipping code pages costs no reads.
 		if offset, err := file.DataOffset(); err == nil {
-			return readMachOSignature(io.NewSectionReader(source, offset, size), size)
+			return readMachOSignatures(io.NewSectionReader(source, offset, size), size)
 		}
 	}
 	if err := compressedExecutableScanError(file.CompressedSize64, file.UncompressedSize64); err != nil {
-		return SignatureUnreadable, nil, err
+		return nil, 0, err
 	}
 	reader, err := file.Open()
 	if err != nil {
-		return SignatureUnreadable, nil, fmt.Errorf("open main executable: %w", err)
+		return nil, 0, fmt.Errorf("open main executable: %w", err)
 	}
 	defer reader.Close()
-	return readMachOSignature(reader, size)
+	return readMachOSignatures(reader, size)
 }
 
 // A compressed executable must be inflated up to its code signature near the
