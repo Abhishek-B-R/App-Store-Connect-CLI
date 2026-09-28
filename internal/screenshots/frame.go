@@ -65,6 +65,12 @@ type CanvasOptions struct {
 	SubtitleColor string       // subtitle text color; defaults to canvasDefaultSubtitleColor
 	Font          string       // font family for title and subtitle; empty uses Koubou's default (Arial)
 	TextPosition  TextPosition // top (default) or bottom
+
+	// TextBox draws a box behind each title and subtitle; nil draws none.
+	TextBox *TextBoxOptions
+	// FontFile, when set, replaces Font: the file is copied into the private
+	// Koubou work root and referenced from the generated YAML.
+	FontFile *FontFile
 }
 
 func (o CanvasOptions) hasText() bool { return o.Title != "" || o.Subtitle != "" }
@@ -468,18 +474,19 @@ type koubouDefaultScreenshotSpec struct {
 }
 
 type koubouDefaultContentItem struct {
-	Type       string    `yaml:"type"`
-	Asset      string    `yaml:"asset,omitempty"`
-	Content    string    `yaml:"content,omitempty"`
-	Position   [2]string `yaml:"position"`
-	Scale      float64   `yaml:"scale,omitempty"`
-	Frame      *bool     `yaml:"frame,omitempty"`
-	Color      string    `yaml:"color,omitempty"`
-	Size       int       `yaml:"size,omitempty"`
-	Weight     string    `yaml:"weight,omitempty"`
-	FontFamily string    `yaml:"font_family,omitempty"`
-	Alignment  string    `yaml:"alignment,omitempty"`
-	MaxWidth   int       `yaml:"max_width,omitempty"`
+	Type       string         `yaml:"type"`
+	Asset      string         `yaml:"asset,omitempty"`
+	Content    string         `yaml:"content,omitempty"`
+	Position   [2]string      `yaml:"position"`
+	Scale      float64        `yaml:"scale,omitempty"`
+	Frame      *bool          `yaml:"frame,omitempty"`
+	Color      string         `yaml:"color,omitempty"`
+	Size       int            `yaml:"size,omitempty"`
+	Weight     string         `yaml:"weight,omitempty"`
+	FontFamily string         `yaml:"font_family,omitempty"`
+	Alignment  string         `yaml:"alignment,omitempty"`
+	MaxWidth   int            `yaml:"max_width,omitempty"`
+	Box        *koubouTextBox `yaml:"box,omitempty"`
 }
 
 // Frame composes screenshots through Koubou's YAML pipeline. The directory of
@@ -562,6 +569,9 @@ func frame(ctx context.Context, req FrameRequest, rootedOutput *rootfs.Root, pin
 		}
 		if req.Canvas != nil {
 			if _, err := ParseTextPosition(string(req.Canvas.TextPosition)); err != nil {
+				return nil, err
+			}
+			if err := req.Canvas.TextBox.validate(); err != nil {
 				return nil, err
 			}
 		}
@@ -880,6 +890,12 @@ func createDefaultKoubouConfigAtRoot(
 		contentItems = bezelContentItems(absInputPath, spec, opts)
 	}
 
+	if opts.FontFile != nil {
+		if err := writeKoubouWorkFile(workRoot, workAttempt, workDir, opts.FontFile.workName(), opts.FontFile.Data); err != nil {
+			return "", frameExecutionMetadata{}, fmt.Errorf("copy font file: %w", err)
+		}
+	}
+
 	configPath := filepath.Join(workDir, "frame.yaml")
 	config := koubouDefaultConfig{
 		Project: koubouProjectConfig{
@@ -900,34 +916,8 @@ func createDefaultKoubouConfigAtRoot(
 	if err != nil {
 		return "", frameExecutionMetadata{}, fmt.Errorf("marshal default Koubou YAML: %w", err)
 	}
-	var configFile *os.File
-	if workRoot != nil {
-		configFile, err = createMatrixPrivateAttemptFileInRoot(workRoot, "frame.yaml", configPath)
-	} else {
-		configFile, err = createMatrixPrivateAttemptFile(configPath)
-	}
-	if err != nil {
-		return "", frameExecutionMetadata{}, fmt.Errorf("write default Koubou YAML: %w", err)
-	}
-	_, writeErr := configFile.Write(data)
-	if writeErr != nil {
-		_ = configFile.Close()
-		return "", frameExecutionMetadata{}, fmt.Errorf("write default Koubou YAML: %w", writeErr)
-	}
-	if workAttempt != nil {
-		configDACL, err := lockMatrixPrivateAttemptFileRetained(configFile)
-		if err != nil {
-			return "", frameExecutionMetadata{}, fmt.Errorf("protect default Koubou YAML: %w", err)
-		}
-		workAttempt.fileDACLs = append(workAttempt.fileDACLs, configDACL)
-	} else {
-		if err := lockMatrixPrivateAttemptFileHandle(configFile); err != nil {
-			_ = configFile.Close()
-			return "", frameExecutionMetadata{}, fmt.Errorf("protect default Koubou YAML: %w", err)
-		}
-		if err := configFile.Close(); err != nil {
-			return "", frameExecutionMetadata{}, fmt.Errorf("close default Koubou YAML: %w", err)
-		}
+	if err := writeKoubouWorkFile(workRoot, workAttempt, workDir, "frame.yaml", data); err != nil {
+		return "", frameExecutionMetadata{}, fmt.Errorf("default Koubou YAML: %w", err)
 	}
 
 	metadata := frameExecutionMetadata{
@@ -939,6 +929,44 @@ func createDefaultKoubouConfigAtRoot(
 		metadata.UploadHeight = height
 	}
 	return configPath, metadata, nil
+}
+
+// writeKoubouWorkFile creates name beneath the Koubou work directory, writes
+// data, and protects the file for the rest of the render. With a pinned
+// attempt root the file is created relative to that root and its protection
+// handle is retained until the attempt is cleaned up.
+func writeKoubouWorkFile(workRoot *os.Root, workAttempt *matrixPrivateAttemptRoot, workDir, name string, data []byte) error {
+	path := filepath.Join(workDir, name)
+	var file *os.File
+	var err error
+	if workRoot != nil {
+		file, err = createMatrixPrivateAttemptFileInRoot(workRoot, name, path)
+	} else {
+		file, err = createMatrixPrivateAttemptFile(path)
+	}
+	if err != nil {
+		return fmt.Errorf("write %s: %w", name, err)
+	}
+	if _, err := file.Write(data); err != nil {
+		_ = file.Close()
+		return fmt.Errorf("write %s: %w", name, err)
+	}
+	if workAttempt != nil {
+		handle, err := lockMatrixPrivateAttemptFileRetained(file)
+		if err != nil {
+			return fmt.Errorf("protect %s: %w", name, err)
+		}
+		workAttempt.fileDACLs = append(workAttempt.fileDACLs, handle)
+		return nil
+	}
+	if err := lockMatrixPrivateAttemptFileHandle(file); err != nil {
+		_ = file.Close()
+		return fmt.Errorf("protect %s: %w", name, err)
+	}
+	if err := file.Close(); err != nil {
+		return fmt.Errorf("close %s: %w", name, err)
+	}
+	return nil
 }
 
 // ResolveFrameDeviceFromConfig resolves the config device to a supported CLI slug.
