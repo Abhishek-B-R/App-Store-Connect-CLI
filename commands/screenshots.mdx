@@ -81,14 +81,40 @@ Koubou finds the screen by flood-filling transparent pixels from the frame edge.
 * `--subtitle` - Overlay subtitle or keyword text
 * `--title-color` - Title text color (hex format)
 * `--subtitle-color` - Subtitle text color (hex format)
-* `--font` - Font family for title and subtitle (an installed font name; defaults to Arial)
+* `--font` - Font for title and subtitle: an installed family name, or a path to a `.ttf`, `.otf`, or `.ttc` file (defaults to Arial)
 * `--text-position` - `top` (default) or `bottom`
+* `--text-box` - Draw a filled box behind the title and subtitle (off by default)
+* `--text-box-color` - Box fill as `#RGB`, `#RRGGBB`, or `#RRGGBBAA` (defaults to `#00000099`)
+* `--text-box-padding` - Box padding in pixels (defaults to a quarter of each overlay's font size)
+* `--text-box-radius` - Box corner radius in pixels (defaults to the padding; `0` draws square corners)
 * `--bg-color` - Solid background color
-* `--overlay-config` - JSON file with `default` and `data[]` entries (`filter`, `title`, `keyword`, `background`). Each input uses the first `data[]` entry whose `filter` appears in its file name, otherwise `default`. Explicit flags win over the matched entry.
+* `--overlay-config` - JSON file with `default` and `data[]` entries (`filter`, `title`, `keyword`, `background`, `textBox`, `textBoxColor`, `textBoxPadding`, `textBoxRadius`). Each input uses the first `data[]` entry whose `filter` appears in its file name, otherwise `default`. Explicit flags win over the matched entry.
 * `--resume` - Skip inputs whose source and render settings still match `.asc/reports/screenshots-frame/state.json`
 * `--parallel-workers` - With `--input-dir`, run up to N renders at once (default `1`, at most the CPU count)
 
-Title, subtitle, font, text position, and background apply to every device. On bezel devices, text reserves a band at the top or bottom of the canvas and the frame is scaled into the remaining space; without `--bg-color`, text overlays sit on a dark gradient. Without text, bezel frames keep the full-canvas layout.
+Title, subtitle, font, text position, text box, and background apply to every device. On bezel devices, text reserves a band at the top or bottom of the canvas and the frame is scaled into the remaining space; without `--bg-color`, text overlays sit on a dark gradient. Without text, bezel frames keep the full-canvas layout.
+
+**Text boxes and font files:**
+
+A text box keeps captions legible over busy or light backgrounds. `--text-box` turns it on for every input; an `--overlay-config` entry turns it on for the inputs it matches with `"textBox": true`. The `--text-box-*` flags override the matched entry's `textBoxColor`, `textBoxPadding`, and `textBoxRadius` key by key.
+
+```bash  theme={null}
+asc screenshots frame --input ./screenshots/raw/home.png --device iphone-air \
+  --title "Plan every trip" --subtitle "Offline maps" --bg-color "#f2c14e" \
+  --font ./brand/Brand-Bold.ttf --text-box --text-box-color "#1b3a5bcc"
+```
+
+```json  theme={null}
+{
+  "default": {"title": "Plan every trip", "textBox": true},
+  "data": [
+    {"filter": "paywall", "title": "Unlock Pro", "textBox": true, "textBoxColor": "#ffffffcc", "textBoxRadius": 0},
+    {"filter": "settings", "title": "Make it yours"}
+  ]
+}
+```
+
+When `--font` names a `.ttf`, `.otf`, or `.ttc` file, asc reads it before Koubou runs and copies it into its private Koubou work directory, so the font does not need to be installed on the rendering host, such as a CI runner. A missing, unreadable, or non-font file is a usage error. So are an invalid box color, a negative padding or radius, a `--text-box-*` flag when no input enables the box, and an overlay entry that sets `textBoxColor`, `textBoxPadding`, or `textBoxRadius` without `"textBox": true` (unless `--text-box` is set). `--resume` treats the box settings and the font file contents as render settings, so changing either renders the input again.
 
 With `--input-dir`, a failed input does not stop the batch. The receipt lists every input with `framed`, `skipped`, or `failed` status, and the command exits `1` when any input failed. With `--resume`, each completed input is recorded as soon as it is written, so rerunning the same command retries only the failed inputs. With `--parallel-workers N`, up to N inputs render at once, each as its own Koubou run with its own receipt row, resume entry, and output file; the receipt still lists inputs in name order. Unknown `--device`, `--frame-color`, or `--text-position` values are usage errors (exit `2`) that list the allowed values.
 

@@ -38,6 +38,10 @@ var watchUnsupportedFrameFlags = []string{
 	"resume",
 	"subtitle",
 	"subtitle-color",
+	"text-box",
+	"text-box-color",
+	"text-box-padding",
+	"text-box-radius",
 	"text-position",
 	"title",
 	"title-color",
@@ -71,9 +75,13 @@ func ShotsFrameCommand() *ffcli.Command {
 	bgColor := fs.String("bg-color", "", "Solid background color (e.g. #1a1a2e); defaults to a dark gradient behind text overlays")
 	titleColor := fs.String("title-color", "", "Title text color (e.g. #000000); defaults to #ffffff")
 	subtitleColor := fs.String("subtitle-color", "", "Subtitle text color (e.g. #333333); defaults to #aaaaaa")
-	font := fs.String("font", "", "Font family for title and subtitle overlays (installed font name; defaults to Arial)")
+	font := fs.String("font", "", "Font for title and subtitle overlays: an installed family name or a path to a .ttf, .otf, or .ttc file (defaults to Arial)")
 	textPosition := fs.String("text-position", string(screenshots.TextPositionTop), "Title and subtitle placement: "+strings.Join(screenshots.TextPositionValues(), ", "))
-	overlayConfig := fs.String("overlay-config", "", "JSON overlay config with default and data[] title, keyword, and background entries")
+	textBox := fs.Bool("text-box", false, "Draw a filled box behind the title and subtitle overlays")
+	textBoxColor := fs.String("text-box-color", "", "Text box fill color as #RGB, #RRGGBB, or #RRGGBBAA; defaults to "+screenshots.DefaultTextBoxColor+" (requires --text-box or an overlay textBox entry)")
+	textBoxPadding := fs.Int("text-box-padding", 0, "Text box padding in pixels; defaults to a quarter of each overlay's font size")
+	textBoxRadius := fs.Int("text-box-radius", 0, "Text box corner radius in pixels; defaults to the padding (0 draws square corners)")
+	overlayConfig := fs.String("overlay-config", "", "JSON overlay config with default and data[] title, keyword, background, and textBox entries")
 	resume := fs.Bool("resume", false, "Skip inputs whose source hash and render settings match .asc/reports/screenshots-frame/state.json")
 	parallelWorkers := fs.Int("parallel-workers", 1, "Frame up to N --input-dir screenshots at once (1 to the CPU count)")
 	output := shared.BindOutputFlags(fs)
@@ -96,8 +104,10 @@ directory, or --config for an explicit Koubou YAML config.
 
 Devices cover iPhone, iPad, Apple Watch, Apple TV, and Mac. Run
 asc screenshots list-frame-devices to see each device's --frame-color values.
-Title and subtitle overlays, --font, --text-position, and --bg-color apply to
-every device.
+Title and subtitle overlays, --font, --text-position, --text-box, and
+--bg-color apply to every device. --font takes an installed family name or a
+.ttf, .otf, or .ttc file; asc copies the file into its private Koubou work
+directory, so the font does not need to be installed on the rendering host.
 
 With --input-dir, a failed input does not stop the batch: the receipt lists
 each input's status and the command exits 1 if any input failed. Add --resume
@@ -122,6 +132,9 @@ framed screenshots whenever the YAML config or referenced raw assets change.`,
 			watchReviewDirSet := false
 			watchRawDirSet := false
 			textPositionSet := false
+			textBoxColorSet := false
+			textBoxPaddingSet := false
+			textBoxRadiusSet := false
 			parallelWorkersSet := false
 			// Watch mode regenerates straight from the Koubou YAML config, so
 			// the single-shot device, canvas and output flags have nowhere to
@@ -139,6 +152,12 @@ framed screenshots whenever the YAML config or referenced raw assets change.`,
 					watchRawDirSet = true
 				case "text-position":
 					textPositionSet = true
+				case "text-box-color":
+					textBoxColorSet = true
+				case "text-box-padding":
+					textBoxPaddingSet = true
+				case "text-box-radius":
+					textBoxRadiusSet = true
 				case "parallel-workers":
 					parallelWorkersSet = true
 				}
@@ -258,6 +277,21 @@ framed screenshots whenever the YAML config or referenced raw assets change.`,
 			if configSet && (frameColorSet || fontSet || textPositionSet) {
 				return shared.WithDiagnostic(shared.UsageError("--frame-color, --font, and --text-position cannot be used with --config; set the frame, font, and text positions in the YAML config instead"), shared.DiagnosticConflictingInput, "--config")
 			}
+			textBoxDetailSet := textBoxColorSet || textBoxPaddingSet || textBoxRadiusSet
+			if configSet && (*textBox || textBoxDetailSet) {
+				return shared.WithDiagnostic(shared.UsageError("--text-box, --text-box-color, --text-box-padding, and --text-box-radius cannot be used with --config; set box on the text items in the YAML config instead"), shared.DiagnosticConflictingInput, "--config")
+			}
+			boxFlags, err := parseTextBoxFlags(*textBox, textBoxFlagValues{
+				color:      *textBoxColor,
+				colorSet:   textBoxColorSet,
+				padding:    *textBoxPadding,
+				paddingSet: textBoxPaddingSet,
+				radius:     *textBoxRadius,
+				radiusSet:  textBoxRadiusSet,
+			})
+			if err != nil {
+				return err
+			}
 
 			frameColorID, err := screenshots.ResolveFrameColor(deviceVal, *frameColor)
 			if err != nil {
@@ -274,16 +308,34 @@ framed screenshots whenever the YAML config or referenced raw assets change.`,
 			if textPositionSet && !hasTextSource {
 				return shared.WithDiagnostic(shared.UsageError("--text-position requires --title, --subtitle, or --overlay-config"), shared.DiagnosticConflictingInput, "--text-position")
 			}
+			if *textBox && !hasTextSource {
+				return shared.WithDiagnostic(shared.UsageError("--text-box requires --title, --subtitle, or --overlay-config"), shared.DiagnosticConflictingInput, "--text-box")
+			}
+			if textBoxDetailSet && !*textBox && strings.TrimSpace(*overlayConfig) == "" {
+				parameter := boxFlags.firstDetailFlag()
+				return shared.WithDiagnostic(shared.UsageError(parameter+" requires --text-box or an --overlay-config textBox entry"), shared.DiagnosticConflictingInput, parameter)
+			}
+			fontFamily := strings.TrimSpace(*font)
+			var fontFile *screenshots.FontFile
+			if fontSet && screenshots.IsFontFilePath(fontFamily) {
+				// Keep the path literal; only the family-name form is trimmed.
+				fontFile, err = screenshots.LoadFontFile(*font)
+				if err != nil {
+					return shared.WithDiagnostic(shared.UsageError("--font: "+err.Error()), shared.DiagnosticInvalidInput, "--font")
+				}
+				fontFamily = ""
+			}
 
 			var baseCanvas *screenshots.CanvasOptions
-			if hasCanvasFlags || fontSet || textPositionSet {
+			if hasCanvasFlags || fontSet || textPositionSet || *textBox {
 				baseCanvas = &screenshots.CanvasOptions{
 					Title:         strings.TrimSpace(*title),
 					Subtitle:      strings.TrimSpace(*subtitle),
 					BGColor:       strings.TrimSpace(*bgColor),
 					TitleColor:    strings.TrimSpace(*titleColor),
 					SubtitleColor: strings.TrimSpace(*subtitleColor),
-					Font:          strings.TrimSpace(*font),
+					Font:          fontFamily,
+					FontFile:      fontFile,
 					TextPosition:  textPositionVal,
 				}
 			}
@@ -294,6 +346,7 @@ framed screenshots whenever the YAML config or referenced raw assets change.`,
 				base:            baseCanvas,
 				fontSet:         fontSet,
 				textPositionSet: textPositionSet,
+				textBox:         boxFlags,
 			}
 			if strings.TrimSpace(*overlayConfig) != "" {
 				if configSet {
@@ -303,6 +356,13 @@ framed screenshots whenever the YAML config or referenced raw assets change.`,
 				loaded, hash, err := screenshots.LoadOverlayConfig(*overlayConfig)
 				if err != nil {
 					return fmt.Errorf("screenshots frame: %w", err)
+				}
+				if err := screenshots.ValidateOverlayTextBoxes(loaded, *textBox); err != nil {
+					return shared.WithDiagnostic(shared.UsageError("--overlay-config: "+err.Error()), shared.DiagnosticInvalidInput, "--overlay-config")
+				}
+				if textBoxDetailSet && !*textBox && !screenshots.OverlayEnablesTextBox(loaded) {
+					parameter := boxFlags.firstDetailFlag()
+					return shared.WithDiagnostic(shared.UsageError(parameter+" requires --text-box or an --overlay-config textBox entry"), shared.DiagnosticConflictingInput, parameter)
 				}
 				settings.overlay = &loaded
 				settings.overlayHash = hash
@@ -414,12 +474,17 @@ type frameRenderSettings struct {
 	overlayHash     string
 	fontSet         bool
 	textPositionSet bool
+	textBox         textBoxFlags
 }
 
-// requireStyledText rejects --font and --text-position when no framed input
-// resolves to title or subtitle text, so the flags never go unused. With
+// requireStyledText rejects --font, --text-position, and --text-box flags when
+// no framed input resolves to title or subtitle text (or, for box details, to
+// a box), so the flags never go unused. With
 // --input-dir it is enough for one input to carry text.
 func (settings frameRenderSettings) requireStyledText(hasText bool) error {
+	if err := settings.textBox.requireUsed(); err != nil {
+		return err
+	}
 	if hasText || settings.overlay == nil {
 		return nil
 	}
@@ -428,6 +493,8 @@ func (settings frameRenderSettings) requireStyledText(hasText bool) error {
 		return shared.WithDiagnostic(shared.UsageError("--font has no effect: --overlay-config supplies no title or keyword for the framed input"), shared.DiagnosticConflictingInput, "--font")
 	case settings.textPositionSet:
 		return shared.WithDiagnostic(shared.UsageError("--text-position has no effect: --overlay-config supplies no title or keyword for the framed input"), shared.DiagnosticConflictingInput, "--text-position")
+	case settings.textBox.enabled:
+		return shared.WithDiagnostic(shared.UsageError("--text-box has no effect: --overlay-config supplies no title or keyword for the framed input"), shared.DiagnosticConflictingInput, "--text-box")
 	}
 	return nil
 }
@@ -440,8 +507,10 @@ func (settings frameRenderSettings) canvasFor(inputPath string) (*screenshots.Ca
 		copied := *settings.base
 		canvasOpts = &copied
 	}
+	var entry screenshots.OverlayEntry
 	if settings.overlay != nil {
-		matched := screenshots.OverlayToCanvas(screenshots.MatchOverlay(*settings.overlay, inputPath))
+		entry = screenshots.MatchOverlay(*settings.overlay, inputPath)
+		matched := screenshots.OverlayToCanvas(entry)
 		if canvasOpts == nil {
 			canvasOpts = &screenshots.CanvasOptions{}
 		}
@@ -454,6 +523,9 @@ func (settings frameRenderSettings) canvasFor(inputPath string) (*screenshots.Ca
 		if canvasOpts.BGColor == "" {
 			canvasOpts.BGColor = matched.BGColor
 		}
+	}
+	if canvasOpts != nil && canvasOpts.Title+canvasOpts.Subtitle != "" {
+		canvasOpts.TextBox = settings.textBox.resolve(entry)
 	}
 	if canvasOpts != nil && canvasOpts.TextPosition == "" {
 		canvasOpts.TextPosition = screenshots.TextPositionTop
@@ -569,6 +641,8 @@ func frameResumeFingerprint(sourceHash string, settings frameRenderSettings, can
 		fp.Background = canvas.BGColor
 		fp.Font = canvas.Font
 		fp.TextPosition = string(canvas.TextPosition)
+		fp.TextBox = screenshots.TextBoxFingerprint(canvas)
+		fp.FontFileHash = canvas.FontFile.Hash()
 	}
 	return screenshots.FingerprintFrameResume(fp)
 }
