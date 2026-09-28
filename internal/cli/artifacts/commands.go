@@ -54,21 +54,26 @@ Examples:
 	}
 }
 
-// PKGInfoCommand prints an offline flat package manifest.
+// PKGInfoCommand prints an offline flat package or product archive manifest.
 func PKGInfoCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("pkg-info", flag.ExitOnError)
-	path := fs.String("path", "", "Path to a flat component .pkg")
+	path := fs.String("path", "", "Path to a flat component package or product archive .pkg")
 	output := shared.BindOutputFlags(fs)
 	return &ffcli.Command{
 		Name:       "pkg-info",
 		ShortUsage: "asc pkg-info --path PATH",
-		ShortHelp:  "Inspect a local flat component package without contacting Apple.",
+		ShortHelp:  "Inspect a local flat package or product archive without contacting Apple.",
 		LongHelp: `Inspect a local flat xar .pkg and print the product identifier, version, install location, component bundle identifiers, and signer identity.
 
+A flat component package is read from its PackageInfo. A product archive, such as productbuild or Xcode writes for the Mac App Store, is read from its Distribution and the PackageInfo of each embedded component package.
+For a product archive, productId, version, minimumOSVersion, and hostArchitectures come from the Distribution, and components lists each embedded component package.
+The primary component is the one whose pkg-ref matches the product identifier, or else the first embedded one. bundleId, buildNumber, and platforms come from the app Info.plist in its payload, falling back to its PackageInfo.
+The app Info.plist is read from a gzip, bzip2, or uncompressed cpio payload in memory, with the same scan and compression-ratio limits as ipa-info. When it cannot be read, or another component is unreadable, a warning is printed to stderr and the exit code is unchanged.
+
 The command does not expand the package onto disk or call Apple. An unreadable package exits 1 after writing a receipt.
-Status readable means PackageInfo was parsed. packageSignature is signed, unsigned, or unreadable, based on the certificates in the package's table of contents.
+Status readable means PackageInfo was parsed, or for a product archive the Distribution and the primary component's PackageInfo. packageSignature is signed, unsigned, or unreadable, based on the certificates in the package's table of contents.
 signer describes the first listed signing certificate and is null for an unsigned package. An unsigned package still exits 0.
-Signature fields are also reported on an unreadable receipt when the table of contents was read, for example for a signed product archive without PackageInfo.
+Signature fields are also reported on an unreadable receipt when the table of contents was read.
 An unreadable package signature prints a warning to stderr and does not change the exit code. Package signatures and certificate chains are not verified, and signatureVerification is always not-verified.
 
 Examples:
@@ -153,6 +158,9 @@ func runArtifactInfo(ctx context.Context, args []string, config artifactInfoConf
 		if manifest.PackageSignatureError != "" {
 			fmt.Fprintf(os.Stderr, "Warning: pkg-info: package signature is unreadable: %s\n", manifest.PackageSignatureError)
 		}
+		for _, warning := range manifest.Warnings {
+			fmt.Fprintf(os.Stderr, "Warning: pkg-info: %s\n", warning)
+		}
 		if inspectErr != nil || manifest.Status != "readable" {
 			if inspectErr == nil {
 				inspectErr = fmt.Errorf("package is unreadable")
@@ -231,19 +239,48 @@ func architectureSignatureSummary(architectures []artifacts.ArchitectureSignatur
 }
 
 func pkgReceipt(path string, manifest artifacts.PKGManifest) *asc.ArtifactPKGInfo {
-	return &asc.ArtifactPKGInfo{
+	info := &asc.ArtifactPKGInfo{
 		SignatureVerification: "not-verified",
 		Path:                  path,
 		ProductID:             manifest.ProductID,
 		Version:               manifest.Version,
 		InstallLocation:       manifest.InstallLocation,
 		BundleIDs:             manifest.BundleIDs,
+		BundleID:              manifest.BundleID,
+		BuildNumber:           manifest.BuildNumber,
+		MinimumOSVersion:      manifest.MinimumOSVersion,
+		Platforms:             manifest.Platforms,
+		HostArchitectures:     manifest.HostArchitectures,
 		SignerCommonName:      manifest.SignerCommonName,
 		TeamID:                manifest.TeamID,
 		Status:                manifest.Status,
 		PackageSignature:      manifest.PackageSignature,
 		Signer:                signerReceipt(manifest.Signer),
 	}
+	for _, component := range manifest.Components {
+		receipt := asc.ArtifactPKGComponent{
+			Path:            component.Path,
+			Identifier:      component.Identifier,
+			Version:         component.Version,
+			InstallLocation: component.InstallLocation,
+			InstallKBytes:   component.InstallKBytes,
+			BundleIDs:       component.BundleIDs,
+			Primary:         component.Primary,
+		}
+		if app := component.App; app != nil {
+			receipt.App = &asc.ArtifactPKGComponentApp{
+				Path:             app.Path,
+				BundleID:         app.BundleID,
+				Name:             app.Name,
+				Version:          app.Version,
+				BuildNumber:      app.BuildNumber,
+				MinimumOSVersion: app.MinimumOSVersion,
+				Platforms:        app.Platforms,
+			}
+		}
+		info.Components = append(info.Components, receipt)
+	}
+	return info
 }
 
 func signerReceipt(signer *artifacts.SignerIdentity) *asc.ArtifactSigner {
