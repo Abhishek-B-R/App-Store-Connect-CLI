@@ -63,6 +63,8 @@ type forwardReader struct {
 	source io.Reader
 	pos    int64
 	size   int64
+	// capture, when set, receives the classified slice's code signature.
+	capture *signatureCapture
 }
 
 func (reader *forwardReader) skipTo(offset int64) error {
@@ -101,7 +103,13 @@ func (reader *forwardReader) read(length int64) ([]byte, error) {
 // universal binary it reads the slice stored first, so the source is consumed
 // once, front to back. A non-nil error always comes with SignatureUnreadable.
 func readMachOSignature(source io.Reader, size int64) (string, *SignerIdentity, error) {
-	status, signer, err := readMachOSignatureStream(&forwardReader{source: source, size: size})
+	return readMachOSignatureCapture(source, size, nil)
+}
+
+// readMachOSignatureCapture is readMachOSignature that also keeps the code
+// signature in capture when capture is non-nil.
+func readMachOSignatureCapture(source io.Reader, size int64, capture *signatureCapture) (string, *SignerIdentity, error) {
+	status, signer, err := readMachOSignatureStream(&forwardReader{source: source, size: size, capture: capture})
 	if err != nil {
 		return SignatureUnreadable, nil, err
 	}
@@ -223,6 +231,9 @@ func readThinSignature(reader *forwardReader, magic []byte, base, sliceSize int6
 	}
 	if err := reader.skipTo(base + dataOffset); err != nil {
 		return "", nil, err
+	}
+	if reader.capture != nil {
+		return captureSuperblob(reader, base, sliceSize, dataSize)
 	}
 	return readSuperblob(reader, dataSize)
 }
@@ -360,6 +371,7 @@ func signerIdentity(certificate *x509.Certificate) *SignerIdentity {
 }
 
 type xarSignature struct {
+	xarHeapRange
 	Certificates []string `xml:"KeyInfo>X509Data>X509Certificate"`
 }
 
