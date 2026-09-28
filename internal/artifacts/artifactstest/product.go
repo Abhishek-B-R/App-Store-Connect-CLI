@@ -16,6 +16,13 @@ import (
 // files in directories, the layout of a product archive's component packages.
 func XarTree(t testing.TB, files map[string][]byte, extraTOC string) []byte {
 	t.Helper()
+	filesXML, heap := xarTreeFiles(files, 0)
+	return xarBytes(t, []byte(`<xar><toc>`+extraTOC+filesXML+`</toc></xar>`), heap)
+}
+
+// xarTreeFiles returns the table of contents file elements and heap for files,
+// whose names may contain "/". Member offsets start at heapBase.
+func xarTreeFiles(files map[string][]byte, heapBase int) (string, []byte) {
 	type node struct {
 		children map[string]*node
 		data     []byte
@@ -51,7 +58,7 @@ func XarTree(t testing.TB, files map[string][]byte, extraTOC string) []byte {
 			id++
 			toc.WriteString(`<file id="` + strconv.Itoa(id) + `"><name>` + name + `</name>`)
 			if child.file {
-				offset := heap.Len()
+				offset := heapBase + heap.Len()
 				heap.Write(child.data)
 				size := strconv.Itoa(len(child.data))
 				toc.WriteString(`<type>file</type><data><length>` + size + `</length><offset>` + strconv.Itoa(offset) + `</offset><size>` + size + `</size><encoding style="application/octet-stream"/></data>`)
@@ -63,7 +70,7 @@ func XarTree(t testing.TB, files map[string][]byte, extraTOC string) []byte {
 		}
 	}
 	write(root)
-	return xarBytes(t, []byte(`<xar><toc>`+extraTOC+toc.String()+`</toc></xar>`), heap.Bytes())
+	return toc.String(), heap.Bytes()
 }
 
 func xarBytes(t testing.TB, toc, heap []byte) []byte {

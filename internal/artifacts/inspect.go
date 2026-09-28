@@ -6,6 +6,7 @@ import (
 	"compress/zlib"
 	"encoding/binary"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"io"
 	"path"
@@ -56,6 +57,9 @@ type IPAManifest struct {
 	// SignerConsistent reports whether every slice has the same signature
 	// classification and signer. It is nil when Architectures is nil.
 	SignerConsistent *bool
+	// SignatureVerification is set only when verification was requested. It
+	// covers the primary slice, the one stored first.
+	SignatureVerification *SignatureVerification
 }
 
 // NestedBundle is an extension or App Clip inside the IPA.
@@ -98,6 +102,8 @@ type PKGManifest struct {
 	PackageSignature      string
 	PackageSignatureError string
 	Signer                *SignerIdentity
+	// SignatureVerification is set only when verification was requested.
+	SignatureVerification *SignatureVerification
 }
 
 type bundlePlist struct {
@@ -113,10 +119,48 @@ type bundlePlist struct {
 	Platform         string   `plist:"DTPlatformName"`
 }
 
+// IPAOptions selects optional IPA inspection work.
+type IPAOptions struct {
+	IncludeEntitlements bool
+	IncludeProfile      bool
+	// VerifySignature verifies the main executable's code signature offline.
+	VerifySignature bool
+}
+
 // InspectIPA reads a bounded IPA zip and returns a metadata manifest. A missing
 // embedded profile is reported as unsigned. The main executable's signer
 // identity is read from its code signature, which is not verified.
 func InspectIPA(source io.ReaderAt, size int64, includeEntitlements, includeProfile bool) (IPAManifest, error) {
+	return InspectIPAWithOptions(source, size, IPAOptions{IncludeEntitlements: includeEntitlements, IncludeProfile: includeProfile})
+}
+
+// InspectIPAWithOptions is InspectIPA with optional signature verification
+// against the embedded Apple roots.
+func InspectIPAWithOptions(source io.ReaderAt, size int64, options IPAOptions) (IPAManifest, error) {
+	if !options.VerifySignature {
+		return inspectIPA(source, size, options.IncludeEntitlements, options.IncludeProfile, nil)
+	}
+	policy, err := appleTrustPolicy()
+	if err != nil {
+		return IPAManifest{Status: "unreadable"}, fmt.Errorf("load Apple certificates: %w", err)
+	}
+	return inspectIPAVerifying(source, size, options.IncludeEntitlements, options.IncludeProfile, policy)
+}
+
+func inspectIPAVerifying(source io.ReaderAt, size int64, includeEntitlements, includeProfile bool, policy *trustPolicy) (IPAManifest, error) {
+	manifest, err := inspectIPA(source, size, includeEntitlements, includeProfile, policy)
+	if manifest.SignatureVerification == nil {
+		detail := "IPA could not be inspected"
+		if err != nil {
+			detail += ": " + err.Error()
+		}
+		manifest.SignatureVerification = &SignatureVerification{Status: VerificationUnsupported, Detail: detail}
+	}
+	return manifest, err
+}
+
+// inspectIPA verifies the code signature when policy is non-nil.
+func inspectIPA(source io.ReaderAt, size int64, includeEntitlements, includeProfile bool, policy *trustPolicy) (IPAManifest, error) {
 	if err := validateZIPDirectory(source, size); err != nil {
 		return IPAManifest{Status: "unreadable"}, fmt.Errorf("open IPA: %w", err)
 	}
@@ -187,9 +231,13 @@ func InspectIPA(source io.ReaderAt, size int64, includeEntitlements, includeProf
 			Path:     path,
 		})
 	}
+	var capture *signatureCapture
+	if policy != nil {
+		capture = &signatureCapture{}
+	}
 	if executableErr == nil {
 		var primary int
-		manifest.Architectures, primary, executableErr = readExecutableSignatures(source, executable)
+		manifest.Architectures, primary, executableErr = readExecutableSignatures(source, executable, capture)
 		if executableErr == nil {
 			slice := manifest.Architectures[primary]
 			manifest.CodeSignature, manifest.CodeSignatureError, manifest.Signer = slice.CodeSignature, slice.CodeSignatureError, slice.Signer
@@ -200,6 +248,14 @@ func InspectIPA(source io.ReaderAt, size int64, includeEntitlements, includeProf
 	if executableErr != nil {
 		manifest.CodeSignature, manifest.Signer = SignatureUnreadable, nil
 		manifest.CodeSignatureError = executableErr.Error()
+	}
+	if policy != nil {
+		var readErr error
+		if manifest.CodeSignatureError != "" {
+			readErr = errors.New(manifest.CodeSignatureError)
+		}
+		verification := verifyIPACodeSignature(source, reader.File, appRoot, main, executable, manifest.CodeSignature, readErr, capture, policy)
+		manifest.SignatureVerification = &verification
 	}
 	if manifest.Signer != nil {
 		manifest.SignerCommonName = manifest.Signer.CommonName
@@ -255,12 +311,12 @@ func mainExecutableMember(files []*zip.File, appRoot, name string) (*zip.File, e
 	return found, nil
 }
 
-func readExecutableSignatures(source io.ReaderAt, file *zip.File) ([]ArchitectureSignature, int, error) {
+func readExecutableSignatures(source io.ReaderAt, file *zip.File, capture *signatureCapture) ([]ArchitectureSignature, int, error) {
 	size := int64(file.UncompressedSize64)
 	if file.Method == zip.Store && file.CompressedSize64 == file.UncompressedSize64 {
 		// Stored members are addressable, so skipping code pages costs no reads.
 		if offset, err := file.DataOffset(); err == nil {
-			return readMachOSignatures(io.NewSectionReader(source, offset, size), size)
+			return readMachOSignaturesCapture(io.NewSectionReader(source, offset, size), size, capture)
 		}
 	}
 	if err := compressedExecutableScanError(file.CompressedSize64, file.UncompressedSize64); err != nil {
@@ -271,7 +327,7 @@ func readExecutableSignatures(source io.ReaderAt, file *zip.File) ([]Architectur
 		return nil, 0, fmt.Errorf("open main executable: %w", err)
 	}
 	defer reader.Close()
-	return readMachOSignatures(reader, size)
+	return readMachOSignaturesCapture(reader, size, capture)
 }
 
 // A compressed executable must be inflated up to its code signature near the
@@ -449,11 +505,47 @@ func stringValue(value any) string {
 	return text
 }
 
+// PKGOptions selects optional package inspection work.
+type PKGOptions struct {
+	// VerifySignature verifies the package signature offline.
+	VerifySignature bool
+}
+
 // InspectPKG reads PackageInfo from a flat xar component package, or the
 // Distribution and embedded component packages of a product archive. The
 // signer identity is read from the package signature certificates, which are
 // not verified.
 func InspectPKG(source io.ReaderAt, size int64) (PKGManifest, error) {
+	return inspectPKG(source, size, nil)
+}
+
+// InspectPKGWithOptions is InspectPKG with optional signature verification
+// against the embedded Apple roots.
+func InspectPKGWithOptions(source io.ReaderAt, size int64, options PKGOptions) (PKGManifest, error) {
+	if !options.VerifySignature {
+		return inspectPKG(source, size, nil)
+	}
+	policy, err := appleTrustPolicy()
+	if err != nil {
+		return PKGManifest{Status: "unreadable"}, fmt.Errorf("load Apple certificates: %w", err)
+	}
+	return inspectPKGVerifying(source, size, policy)
+}
+
+func inspectPKGVerifying(source io.ReaderAt, size int64, policy *trustPolicy) (PKGManifest, error) {
+	manifest, err := inspectPKG(source, size, policy)
+	if manifest.SignatureVerification == nil {
+		detail := "package table of contents could not be read"
+		if err != nil {
+			detail += ": " + err.Error()
+		}
+		manifest.SignatureVerification = &SignatureVerification{Status: VerificationUnsupported, Detail: detail}
+	}
+	return manifest, err
+}
+
+// inspectPKG verifies the package signature when policy is non-nil.
+func inspectPKG(source io.ReaderAt, size int64, policy *trustPolicy) (PKGManifest, error) {
 	document, heap, files, err := readXarFiles(source, size)
 	if document == nil {
 		return PKGManifest{Status: "unreadable"}, err
@@ -470,6 +562,10 @@ func InspectPKG(source io.ReaderAt, size int64) (PKGManifest, error) {
 		signature.SignerCommonName = signature.Signer.CommonName
 		signature.TeamID = signature.Signer.TeamID
 	}
+	if policy != nil {
+		verification := verifyXarSignature(source, size, document, signature.PackageSignature, signatureErr, policy)
+		signature.SignatureVerification = &verification
+	}
 	withSignature := func(manifest PKGManifest, status string) PKGManifest {
 		manifest.Status = status
 		manifest.SignerCommonName = signature.SignerCommonName
@@ -477,6 +573,7 @@ func InspectPKG(source io.ReaderAt, size int64) (PKGManifest, error) {
 		manifest.PackageSignature = signature.PackageSignature
 		manifest.PackageSignatureError = signature.PackageSignatureError
 		manifest.Signer = signature.Signer
+		manifest.SignatureVerification = signature.SignatureVerification
 		return manifest
 	}
 	if err != nil {
@@ -601,6 +698,14 @@ type xarDocument struct {
 	Files      []xarFile     `xml:"toc>file"`
 	Signature  *xarSignature `xml:"toc>signature"`
 	XSignature *xarSignature `xml:"toc>x-signature"`
+	Checksum   *xarHeapRange `xml:"toc>checksum"`
+}
+
+// xarHeapRange locates a TOC checksum or signature in the heap.
+type xarHeapRange struct {
+	Style  string `xml:"style,attr"`
+	Offset int64  `xml:"offset"`
+	Size   int64  `xml:"size"`
 }
 
 type xarFile struct {
