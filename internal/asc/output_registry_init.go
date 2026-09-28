@@ -71,6 +71,7 @@ func registerAllOutputRenderers() {
 	registerDirect(appsPublishedReportTables)
 	registerRows(appRenameResultRows)
 	registerRows(webAppCreateResultRows)
+	registerRows(webAppCreateIfExistsResultRows)
 	registerRows(appsWallRows)
 	registerRowsWithSingleResourceAdapter(appClipsRows)
 	registerRowsWithSingleToListAdapter[AppCategoryResponse, AppCategoriesResponse](appCategoriesRows)
