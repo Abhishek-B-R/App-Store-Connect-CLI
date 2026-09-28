@@ -85,7 +85,7 @@ func ReviewStatusCommand() *ffcli.Command {
 
 	appID := fs.String("app", "", "App Store Connect app ID, bundle ID, or exact app name (required, or ASC_APP_ID)")
 	version := fs.String("version", "", "App Store version string to inspect")
-	versionID := fs.String("version-id", "", "App Store version ID to inspect")
+	versionID := shared.BindResourceIDFlag(fs, "version-id", "appStoreVersions", "App Store version ID to inspect")
 	platform := fs.String("platform", "", "Platform filter: IOS, MAC_OS, TV_OS, VISION_OS")
 	output := shared.BindOutputFlags(fs)
 
@@ -147,7 +147,7 @@ func ReviewDoctorCommand() *ffcli.Command {
 
 	appID := fs.String("app", "", "App Store Connect app ID, bundle ID, or exact app name (required, or ASC_APP_ID)")
 	version := fs.String("version", "", "App Store version string to diagnose")
-	versionID := fs.String("version-id", "", "App Store version ID to diagnose")
+	versionID := shared.BindResourceIDFlag(fs, "version-id", "appStoreVersions", "App Store version ID to diagnose")
 	platform := fs.String("platform", "", "Platform filter: IOS, MAC_OS, TV_OS, VISION_OS")
 	output := shared.BindOutputFlags(fs)
 
@@ -412,18 +412,32 @@ func summarizeReviewSubmissionItems(ctx context.Context, client *asc.Client, sub
 		return summary, err
 	}
 
-	for {
-		accumulateReviewSubmissionItems(&summary, resp.Data, versionID)
-
-		nextURL := strings.TrimSpace(resp.Links.Next)
-		if nextURL == "" {
-			return summary, nil
-		}
-
-		resp, err = client.GetReviewSubmissionItems(ctx, submissionID, asc.WithReviewSubmissionItemsNextURL(nextURL))
+	trimReviewSubmissionItemsNextURL(resp)
+	err = asc.PaginateEach(ctx, resp, func(ctx context.Context, nextURL string) (asc.PaginatedResponse, error) {
+		nextPage, err := client.GetReviewSubmissionItems(ctx, submissionID, asc.WithReviewSubmissionItemsNextURL(strings.TrimSpace(nextURL)))
 		if err != nil {
-			return summary, err
+			return nil, err
 		}
+		trimReviewSubmissionItemsNextURL(nextPage)
+		return nextPage, nil
+	}, func(page asc.PaginatedResponse) error {
+		pageResp, ok := page.(*asc.ReviewSubmissionItemsResponse)
+		if !ok || pageResp == nil {
+			return fmt.Errorf("unexpected review submission items pagination response type %T", page)
+		}
+		accumulateReviewSubmissionItems(&summary, pageResp.Data, versionID)
+		return nil
+	})
+	if err != nil {
+		return summary, err
+	}
+
+	return summary, nil
+}
+
+func trimReviewSubmissionItemsNextURL(resp *asc.ReviewSubmissionItemsResponse) {
+	if resp != nil {
+		resp.Links.Next = strings.TrimSpace(resp.Links.Next)
 	}
 }
 

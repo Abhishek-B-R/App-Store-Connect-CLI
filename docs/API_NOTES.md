@@ -170,11 +170,26 @@ the App Store Connect web-client source captured for issue #2299:
 - `asc web apps delete` uses this collection for the "removed from sale in all territories" preflight. The public API counterpart is `/v2/appAvailabilities/{id}/territoryAvailabilities`.
 - `asc web removed-apps restore` uses PATCH `/iris/v1/apps/{id}` with `removed:false`, verifies the app is no longer removed, then POSTs `/iris/v1/userAppPermissions` with `GRANT` (full) or `REVOKE` (limited) for `ALL_SILOABLE_USERS`. Permission writes are skipped when PATCH or verification fails.
 
+## App price schedules (`POST /v1/appPriceSchedules`)
+
+- The POST is the only write on the resource and replaces the app's whole schedule. Live runs against disposable app `6759231657` on 2026-09-26 and 2026-09-27 (each one snapshot, attempts, restore, and verification in a single serialized session) returned HTTP 409 for each of these causes. The raw bodies are checked in under `internal/cli/cmdtest/testdata/pricing_schedule_create_409/`, byte for byte including Apple's per-response error `id`.
+  - A manual price whose `startDate` is before today: `ENTITY_ERROR.INVALID_START_DATE`, detail `Interval can not have a start date in the past`.
+  - A single manual price whose `startDate` is after today: `ENTITY_ERROR.INVALID_START_DATE`, detail `Entire timeline must be covered for USA. The first interval has a start date 2026-10-26T00:00 in the future`. The request must cover the timeline from today, so a one-price request cannot schedule a future change; this also failed when the existing schedule already had a current price.
+  - A price point from another territory than `baseTerritory` (a USA price point with base territory FRA): `ENTITY_ERROR.BASE_TERRITORY_INTERVAL_REQUIRED`, detail `There must be at least one manual price for the base territory.`
+  - An unknown price point ID, including a valid price point of another app: `ENTITY_ERROR.NOT_FOUND`, detail `The resource 'appPricePoints' with id '…' was not found.`
+- App Store Connect's "today" is not the UTC date. At 23:22 UTC on 2026-09-26, `startDate` 2026-09-26 returned 201. At 00:03 UTC on 2026-09-27, `startDate` 2026-09-27 (the UTC date, and the CLI's default at the time) returned the future-start 409 above, while 2026-09-26 (the US Pacific date) returned 201. Both observations match the US Pacific date; the exact time zone is not documented. The CLI's UTC default for `--start-date` was therefore rejected between UTC midnight and US Pacific midnight, so `asc pricing schedule create` and `asc app-setup pricing set` now default to today's date in US Pacific time (`America/Los_Angeles`, with the time zone database embedded in the binary).
+- An accepted `startDate` of today is stored as `startDate: null`. Omitting `startDate` also returned 201 and restored the original `startDate: null` / `endDate: null` interval.
+- `asc pricing schedule create` and `asc app-setup pricing set` explain these four causes with a specific message, keep Apple's response after it, add an allowlisted diagnostic (`invalid_input` on `--start-date`, `conflicting_input` on `--base-territory`, or `resource_not_found` on the price flag), and keep the 409 exit code and `api_conflict` telemetry kind. Any other 409, including the same code with an unrecognized detail, prints exactly as before.
+
 ## Developer Portal iCloud containers
 
 - `asc web icloud-containers list` reads the modern Developer Portal collection through the cookie-authenticated web session. The logical request is `GET /services-account/v1/cloudContainers?filter[AND][hidden]=false` (or `true` with `--hidden`); Apple's browser transport sends it as `POST` with `X-HTTP-Method-Override: GET`.
 - The request body carries the selected `teamId` and `urlEncodedQueryParams=limit=1000&offset=0&sort=name`. The command uses this bounded first collection and has no `--paginate` flag. Apple response envelopes are preserved for JSON output, including `links` and `meta.paging` when present. A warning on stderr identifies an incomplete collection when Apple supplies a continuation link or a paging total larger than the returned rows; the CLI does not invent or follow a next-page contract.
-- Resource rows expose Apple's observed `identifier`, `hidden`, `prefix`, `canEdit`, `name`, `canDelete`, and `responseId` attributes along with the opaque resource `id` and `type`. No detail or create/rename/delete contract is assumed from this list response.
+- Resource rows expose Apple's observed `identifier`, `hidden`, `prefix`, `canEdit`, `name`, `canDelete`, and `responseId` attributes along with the opaque resource `id` and `type`. No detail, rename, or delete contract is assumed from this list response.
+- `asc web icloud-containers create --identifier iCloud.ID --name NAME --confirm` sends `POST /services-account/v1/cloudContainers` (no method override, CSRF headers required) with the JSON:API body `{"data":{"type":"cloudContainers","attributes":{"identifier":...,"name":...,"teamId":...}}}`. The body has no root-level `teamId` and no relationships. This follows the sibling creates on the same modern proxy: `websitepushIds` (captured: `data.type`, `name`, `identifier`, and `teamId` attributes) and Services ID `bundleIds` (captured: Apple rejects a root-level `teamId` on create). The list read above shows `cloudContainers` is on that proxy. fastlane Spaceship still uses the older form endpoint `POST /services-account/QH65B2/account/cloudContainer/addCloudContainer.action` with `name`, `identifier`, and `teamId` ([portal_client.rb#L483-L492](https://github.com/fastlane/fastlane/blob/5faa062de92fd21e5674efcfde1a8359de7dd861/spaceship/lib/spaceship/portal/portal_client.rb#L483-L492)). The captured list read shows the current portal reads iCloud containers from the v1 collection, not fastlane's `listCloudContainers.action`. fastlane sends the full `iCloud.`-prefixed identifier unchanged ([cloud_container.rb#L59-L62](https://github.com/fastlane/fastlane/blob/5faa062de92fd21e5674efcfde1a8359de7dd861/spaceship/lib/spaceship/portal/cloud_container.rb#L59-L62), [commands_generator.rb#L263-L270](https://github.com/fastlane/fastlane/blob/5faa062de92fd21e5674efcfde1a8359de7dd861/produce/lib/produce/commands_generator.rb#L263-L270)). The CLI therefore requires `--identifier` to start with `iCloud.` exactly and never adds the prefix.
+- Before the POST, the visible and hidden collections are read and an existing identifier is refused. That preflight fails closed when either bounded collection reports a continuation link or a paging total larger than its rows. After Apple accepts the create, both collections are read again. The new container must appear exactly once, with the ID from the create response when Apple returns one. A 408, 5xx, transport failure, missing read-back match, ID mismatch, or a create response that is not JSON or whose `data` resource has a type other than `cloudContainers`, no ID, an identifier other than the requested one, or an ID other than the read-back match is reported as an unverified outcome. A resource that omits `attributes.identifier` is still bound by its ID to the read-back match. An empty body or a JSON body with absent or null `data` carries no identity, so the read-back alone decides (the same rule as the Services ID create); the live response body was not recorded. The POST is never retried, because iCloud containers can never be deleted.
+- Live capture (2026-09-29, CLI built from `414167918`, one maintainer-approved permanent container): the sequence was `listTeams.action` 200, the visible and hidden preflight reads 200, `POST https://developer.apple.com/services-account/v1/cloudContainers` **201**, then the visible and hidden read-backs 200. The receipt was `containerId` `7PU5FAD3YR`, identifier `iCloud.com.rorkai.asc.capture.t1790620906`, name `asc capture container`, prefix `YQZQG7N4WG` (the team prefix), and `hidden:false`. A separate `asc web icloud-containers list` showed the same ID, identifier, and name. This container is permanent and cannot be removed. It stays in the team as the capture artifact; do not create another one to re-verify.
+- The create response body was not recorded. `internal/web/testdata/icloud_container_create_capture.json` holds the captured request body and status, plus the read-back resource. Its `canEdit`, `canDelete`, and `responseId` values are inferred. The replay test accepts both a JSON:API resource body and an empty 201 body, because the read-back is the authority either way.
 
 ## Web-session Resolution Center
 
@@ -211,6 +226,12 @@ the App Store Connect web-client source captured for issue #2299:
 - A draft read response without `data` is malformed, not proof of absence.
   Create refuses it before writing; delete cannot report verified success
   from it. Only explicit `data: null` or a relationship 404 means no draft.
+
+## Web-session app create conflicts (`POST /iris/v1/apps`)
+
+- Captured live on 2026-09-29 against disposable app `6759231657`: re-running `asc web apps create --name "ASC Test 20260216074703" --bundle-id com.rudrank.asc.throwaway20260216074703 --sku asc-test-20260216074703 --auto-rename=false` returned HTTP 409 with three `errors[]` entries whose codes are, in order, `ENTITY_ERROR.ATTRIBUTE.INVALID.DUPLICATE`, `ENTITY_ERROR.ATTRIBUTE.INVALID.DUPLICATE` and `ENTITY_ERROR.ATTRIBUTE.INVALID.DUPLICATE.SAME_ACCOUNT`. The CLI exited 5 with `web apps create failed: web api error (status 409) ... codes=[...]`.
+- Only the status and the codes were captured. The `detail`, `title` and `source` of each entry were not printed, so which attribute (name, SKU or bundle ID) each entry refers to is unknown. The captured-shape test fixture carries codes only. A second fixture adds an app-name `detail` and `source` pointers to exercise the `--auto-rename` interaction; those fields are **synthetic** (inferred, not captured) and are labeled as such in `internal/cli/web/web_apps_create_if_exists_test.go`.
+- `asc web apps create --if-exists skip` keys on either code on a 409 and then reads the app back through the public API (`GET /v1/apps?filter[bundleId]=`, then `filter[sku]=`); the read-back is decisive. See `docs/design/if-exists-idempotent-writes.md` for the precedence with `--auto-rename`.
 
 ## Web-session app distribution method
 
@@ -274,6 +295,17 @@ the App Store Connect web-client source captured for issue #2299:
 - When `POST /v1/builds/{id}/relationships/betaGroups` returns HTTP 422, `asc builds add-groups` preserves Apple's error and exit status, then makes bounded, best-effort reads of the build and, for external groups, its beta detail. The resulting diagnostic reports the current state without claiming which state caused Apple's rejection. Successful assignments and non-422 failures do not make these diagnostic reads.
 - `asc builds add-groups --dry-run` is an explicit no-mutation preview: it resolves the build and groups, then may read the build and external beta detail, but never sends the relationship POST or submits beta app review. There is no documented validation-only App Store Connect endpoint, so the state shown by dry-run is observational and advisory rather than proof that a later assignment will succeed. `--submit` cannot be combined with `--dry-run`.
 
+## TestFlight text validation (What to Test)
+
+- A live probe on 2026-09-25 against `betaAppLocalizations` `description` on a disposable app (the app had no builds, so `betaBuildLocalizations` `whatsNew` could not be written directly) rejected the write with `An attribute value has invalid text.: Text contains invalid characters/formats.` for: any `<` (including `a<b` and `x < y`); decomposed `Cafe` + U+0301 that NFC would compose; U+0301 after `q` or at the start of the text; U+1AB0; U+20D7; and every tested emoji (`❤`, `❤️`, U+FE0E, keycap, ZWJ family, skin tone, `😀`).
+- The same probe accepted `>`, `&`, the literal text `&lt;`, newlines, precomposed Vietnamese, and script-specific combining marks: Devanagari (`हिंदी में परीक्षण करें`, including a leading U+0902), Thai tone marks, Hebrew niqqud, Arabic harakat, and the Cyrillic titlo U+0483.
+- A live probe on 2026-09-26 against `betaBuildLocalizations` `whatsNew` (PATCH on an existing localization, disposable app) answered 409 `An attribute value has invalid text.: Text for whatsNew contains invalid characters:'[…]'` and listed each offending character. Rejected: every supplementary-plane character (U+1F600, ZWJ family, skin tone U+1F3FD, regional indicators U+1F1FA/U+1F1F8, U+1F004, U+1F130, U+1D400, U+1D11E, U+10330, U+20000); Variation Selectors U+FE00, U+FE0E, U+FE0F (even after a plain `a`); enclosing marks U+20DD and keycap U+20E3; Control Pictures U+2400 and OCR U+2440; Box Drawing U+2500/U+257F and Block Elements U+2588/U+2591; Miscellaneous Symbols U+2600–U+26FF (`☀☂☺♠♥⚠★☆`, U+26FF); Dingbats U+2701–U+27BF (`✓✔✖✗✂✨✅❤`, U+2794, U+27BF); Miscellaneous Mathematical Symbols-A U+27C2 and -B U+2980; Braille U+2801; Supplemental Mathematical Operators U+2A00; Miscellaneous Symbols and Arrows U+2B00–U+2BFF (`⬆⭐⭕⬛`); Private Use U+E000 and U+F8FF; U+FFFD. Accepted: Arrows (U+2192, U+2194, U+21FF), Supplemental Arrows-A U+27F6 and -B U+2934, Letterlike (`™`, `ℹ`, `№`), `©`, `®`, Miscellaneous Technical (U+2300, `⌘⌚⌛`, U+23E9, U+23F0, U+23FF), Enclosed Alphanumerics (U+2460, `Ⓜ`, U+24FF), Geometric Shapes (U+25A0, U+25AA, `▶`, U+25CF, U+25FB, U+25FF), Mathematical Operators, General Punctuation (`•…—‼⁉`), `€`, U+3030, U+303D, U+3297, U+3299, newlines, CRLF, tabs, NBSP, soft hyphen, ZWSP, ZWJ/ZWNJ inside Devanagari and Persian, LRM/RLO, U+FEFF, and Latin, Greek, Cyrillic, IPA, CJK, Hangul, Thai, Hebrew, Arabic, Devanagari, and Tamil text.
+- The same probe also saw App Store Connect reject whole scripts and presentation forms in whatsNew: Ethiopic, Cherokee, Khmer, Georgian, Tibetan, Mongolian, Yi, Vai, Glagolitic, U+02C6 (Spacing Modifier Letters), Alphabetic Presentation Forms U+FB01, Arabic Presentation Forms U+FDFD, Vertical Forms U+FE10, Small Form Variants U+FE50, and CJK Compatibility U+3300. The CLI does not refuse these locally: they were sampled with only a few characters each and some neighboring characters (IPA, U+F900) are accepted, so App Store Connect stays the authority for them.
+- `asc builds test-notes create|update`, `asc builds upload --test-notes`, and `asc publish testflight --test-notes` therefore NFC-normalize What to Test notes, then remove `<` and nonspacing marks from the generic combining-diacritic blocks (U+0300–036F, U+1AB0–1AFF, U+1DC0–1DFF, U+20D0–20FF, U+FE20–FE2F) that NFC could not compose. Script-specific marks are never modified. A one-line stderr notice names what was removed without echoing the notes. Characters in the rejected symbol ranges above (supplementary planes, Variation Selectors, remaining U+20D0–20FF enclosing marks, U+2400–245F, U+2500–259F, U+2600–27EF, U+2800–28FF, U+2980–2BFF, Private Use, U+FFFD) are a usage error (exit 2) that lists each distinct code point and never echoes the notes; they are refused rather than removed because stripping emoji silently changes the operator's text.
+- The check runs before any request, so a refused note never leaves a side effect. Before this, `asc builds test-notes create` with `❤️` for a locale missing its `betaAppLocalizations` record created that record and only then received the whatsNew rejection. When App Store Connect still rejects notes after the CLI created the locale's TestFlight app localization, the CLI keeps that record and reports the creation on stderr: it is the prerequisite for any What to Test in that locale, a retry needs it, and deleting it would be an unconfirmed destructive write.
+- Before writing What to Test, the CLI ensures the app has a `betaAppLocalizations` record for the locale. The lookup uses `filter[app]` plus `filter[locale]`; a live check on 2026-09-25 showed App Store Connect matches `filter[locale]` case-insensitively (`fr-fr` and `FR-FR` both returned `fr-FR`). A missing record is created with only the locale and app relationship, and a one-line stderr notice names the locale and app.
+- `POST /v1/betaAppLocalizations` returns HTTP 409 both for a duplicate locale (`There is an entity with same 'locale'`, including a case-only difference) and for an invalid locale (`The 'locale' value is invalid.`). A 409 therefore does not prove the record exists: the CLI repeats the filtered lookup and keeps Apple's original error unless the locale is now present.
+
 ## Game Center
 
 - Most Game Center endpoints require a Game Center detail ID, resolved via `/v1/apps/{id}/gameCenterDetail`.
@@ -316,8 +348,15 @@ the App Store Connect web-client source captured for issue #2299:
 - Uploads to the presigned URLs Apple returns in `uploadOperations` retry per part rather than per file: a PUT part is retried on 408/429/500/502/503/504 and on transient transport failures, using the same retry settings and honoring Retry-After only up to `ASC_MAX_DELAY`. Over-cap hints fail fast; parts that use any other method are never replayed, and each attempt is bounded by `ASC_UPLOAD_TIMEOUT`. This applies to build, screenshot, Game Center, App Clip, subscription, in-app purchase, and app event asset uploads.
 - Unauthenticated public storefront reads used by `asc apps public view`, `asc apps public search`, `asc apps public prices`, `asc apps public descriptions`, `asc apps public rank`, and `asc reviews ratings` are idempotent GET requests. They retry 429 and 5xx responses with the shared backoff settings; Apple sends `Retry-After` as either seconds or an HTTP date on these endpoints, and both forms are capped at `ASC_MAX_DELAY`. `ASC_MAX_RETRIES=0` disables the retries. Successful stdout (including table and JSON renderers) and terminal public-storefront status errors remain unchanged; non-retryable statuses, transport failures, decode failures, and context cancellation are not replayed.
 - The public storefront retry path is validated with deterministic `httptest` coverage for status boundaries, Retry-After parsing/capping, response-body draining, request replay, concurrency, and cancellation. It does not perform live mutations. The additive behavior can increase latency and request volume during transient failures, and Apple's undocumented storefront responses remain an external compatibility risk.
+- A client sends at most 8 ordinary mutating requests at once. A bulk fan-out may opt in to a client-wide ceiling of 16 (`asc.WithBulkMutatingRequestLimit`); ordinary writes stay capped at 8 beneath it. Retry and backoff are identical in both cases, and a request waiting on Retry-After releases its slot. Only the per-territory PATCH fan-out behind `asc pricing availability edit`, `asc app-setup availability edit`, and `asc pricing availability remove-from-sale` opts in. The limit of 16 is covered by request-gating tests with a fake transport; its behavior against App Store Connect rate limits has not been measured live yet (#2786).
+- The public API has no multi-territory update for app availability. `PATCH /v1/territoryAvailabilities/{id}` updates one territory, and `/v2/appAvailabilities` has no PATCH. `POST /v2/appAvailabilities` accepts inline `territoryAvailabilities` in `included`, but it is a create that requires `availableInNewTerritories` and resends the whole territory list, and its acceptance for an app that already has availability is unverified. The edit commands therefore keep per-territory PATCHes.
 - `--api-debug` and `ASC_DEBUG=api` log each response's raw `X-Rate-Limit` value to stderr without changing stdout.
 - Some endpoints return 403 when the API key role lacks permission (e.g., finance reports, reviews).
+
+## Profiles and certificates list filters
+
+- `GET /v1/profiles` and `GET /v1/certificates` do not accept `filter[platform]`. `UNIVERSAL` is a bundle-ID platform, and sending it on these list endpoints is rejected by Apple. `asc profiles list` and `asc certificates list` must not add that parameter. Bundle ID list is the endpoint that accepts `filter[platform]`, including `UNIVERSAL`.
+- Generated provisioning-profile names have no `maxLength` in the OpenAPI snapshot. `signing fetch` and `signing sync` keep generated names within 64 Unicode characters (counted as code points), truncating the bundle component at a character boundary and appending a stable 6-character hash so siblings stay distinct. `profiles create --name` rejects a longer explicit name before any API call.
 
 ## Builds
 
@@ -441,6 +480,22 @@ the App Store Connect web-client source captured for issue #2299:
   current relationship map, including `bundleIdCapabilities`, and changes only
   the name plus the private team attribute required by the endpoint. A
   post-write detail read must match the requested name and identifier.
+  Because the PATCH echoes `bundleIdCapabilities` back as the complete set,
+  rename applies the same capability completeness check as `domains set`
+  (below) to the preflight read before sending the PATCH, and again to the
+  post-write read: no `next` link, and either an exact `paging.total` or the
+  captured populated-linkage placeholder. The request sent to Apple is
+  unchanged. A 2026-09-28 live capture on the disposable team (`asc web
+  service-ids create --identifier com.rorkai.asc.capture.services.t1790609684
+  --name "asc capture temp" --confirm`, then `asc web service-ids view
+  --service-id ID --output json`, then `asc web service-ids delete --service-id
+  ID --confirm`; a follow-up view returned 404 and the list had no match)
+  showed that a Services ID with zero capabilities returns
+  `{"meta":{"paging":{"total":0,"limit":2147483647}},"data":[],"links":{"self":...,"related":...}}`
+  with no `next` link. Its exact zero total proves completeness, so renaming a
+  capability-less Services ID keeps working. The sanitized relationship is
+  checked in as `internal/web/testdata/service_id_empty_capabilities_relationship.json`,
+  with the captured resource ID in its links replaced by `service-1`.
 - `asc web service-ids delete --service-id ID --confirm` sends
   logical `DELETE /services-account/v1/bundleIds/{id}` as the captured actual
   `POST` plus `X-HTTP-Method-Override: DELETE` and a JSON body containing the
@@ -453,8 +508,32 @@ the App Store Connect web-client source captured for issue #2299:
   failed post-read is an unverified outcome; no Services ID mutation is
   retried automatically.
 - Services ID lifecycle support is private-only because the public OpenAPI
-  `BundleIdPlatform` enum does not include `SERVICES`. Capability graph
-  mutation and Sign in with Apple domain configuration remain uncaptured.
+  `BundleIdPlatform` enum does not include `SERVICES`.
+- `asc web service-ids domains set` replaces complete domain and return URL
+  lists on an already enabled Sign in with Apple Services ID. The primary App ID
+  must already be configured; this command does not enable or re-parent it.
+  The 2026-09-26 browser capture accepted `PATCH /services-account/v1/bundleIds/{id}`
+  with an ID-less `bundleIdCapabilities` child linked to capability `APPLE_ID_AUTH`
+  and its existing `appConsentBundleId`. Its `inputs` use keys
+  `APPLE_ID_AUTH_WEB_DOMAIN` and `APPLE_ID_AUTH_WEB_RETURN_URL`, with `values`
+  arrays of `{ "value": "..." }` objects. Other capability inputs/settings and
+  parent relationships are preserved. A separate detail read must confirm the
+  resulting state; ambiguous writes are never retried automatically.
+  The captured detail response reported `paging.total=0` with
+  `limit=2147483647` despite populated capability linkage. This specific
+  placeholder is accepted only with resolved references and no next page;
+  positive count mismatches and missing or unreferenced included capabilities fail.
+  Because the detail read sends no `limit[bundleIdCapabilities]`, a short page is
+  not proof of completeness: the relationship must carry an exact `paging.total`
+  or that placeholder. Missing paging metadata, a missing total, or a `limit`
+  below the returned count fails before the PATCH and on the verification read.
+  Capability relationships may also contain navigation-only links without `data`
+  (for example, `appGroups` and `bundleId`). Known navigation-only relationships
+  are omitted from the PATCH; explicit relationship data is preserved, and unknown
+  unresolved relationships fail before writing.
+  Live CLI verification on 2026-09-27 confirmed an update, unchanged repeat, and
+  two-domain/two-return-URL replacement with the existing primary App ID preserved.
+  The disposable Services ID and parent App ID were deleted afterward.
   Website Push ID lifecycle and iCloud container reads use the separate
   captured workflows documented below.
 
@@ -596,3 +675,28 @@ Observed 2026-09-02 against a live App Store Connect team. The CLI does not add 
 - The deprecated `asc ads v5 reports preset` warning follows `--level`: campaigns, ad groups, ads, keywords, and search terms point to their matching `asc ads reports apps` command; the two ad-group-specific keyword levels point to v1's consolidated `keywords` or `search-terms` report.
 
 Transaction Tax archive streaming uses a bounded workflow context instead of inheriting the web client's shorter per-request timeout. Lower-level callers without a context deadline retain the configured client timeout. Caller cancellation still bounds the download, and the shared client timeout remains unchanged.
+
+## Offline signature verification: Apple leaf certificate types
+
+`asc ipa-info --verify-signature` accepts only code-signing leaves and `asc pkg-info --verify-signature` accepts only installer leaves (`internal/artifacts/verify_leaf.go`). A leaf is typed by the Apple extensions it carries and must also carry the matching extended key usage (EKU). Any other leaf, including one whose type is not recognized or one carrying both code-signing and installer markers, reports `untrusted-chain`. The table was built on 2026-09-28 from public certificates on a macOS 27 host: login keychain certificates (`security find-certificate -a -p`), `DeveloperCertificates` in local provisioning profiles, leaves extracted with `codesign -d --extract-certificates` from signed apps and IPAs, and leaves read from the `X509Certificate` elements of flat-package tables of contents (`xar --dump-toc`). Apple's device-management article "Allowing and denying apps and binaries" confirms 6.1.9 (App Store), 6.1.13 (Developer ID), 6.1.4, and 6.1.12 (development). Apple's WWDR and Developer ID CPS pages were not machine-readable at the time.
+
+| Type | Apple markers (`1.2.840.113635.100.…`) | EKU | Artifact | Evidence |
+|------|------|-----|----------|----------|
+| Apple Development | `6.1.2` + `6.1.12` | codeSigning | IPA / Mach-O | keychain; 22 provisioning-profile certificates |
+| Apple Distribution | `6.1.4` + `6.1.7` | codeSigning | IPA / Mach-O | 11 provisioning-profile certificates; the app inside an exported Mac App Store pkg |
+| iPhone Developer (legacy) | `6.1.2` | codeSigning | IPA / Mach-O | keychain; 8 provisioning-profile certificates |
+| iPhone Distribution (legacy) | `6.1.4` | codeSigning | IPA / Mach-O | keychain; profiles; an App Store export IPA's executable |
+| Mac App Distribution (3rd Party Mac Developer Application) | `6.1.7` | codeSigning | IPA / Mach-O | the Mac half of Apple Distribution; no standalone leaf on the host |
+| Mac Development (legacy Mac Developer) | `6.1.12` | codeSigning | IPA / Mach-O | the Mac half of Apple Development; Apple docs mark 6.1.12 as development |
+| Developer ID Application | `6.1.13` | codeSigning | IPA / Mach-O | keychain; third-party apps in `/Applications`; Apple docs |
+| Mac App Store application signing (Apple Mac OS Application Signing) | `6.1.9` | codeSigning | IPA / Mach-O | a Mac App Store app in `/Applications`; Apple docs |
+| Apple platform signing (macOS Software Signing) | `6.22` | codeSigning | IPA / Mach-O | `/bin/ls`, Safari |
+| Developer ID Installer | `6.1.14` | `1.2.840.113635.100.4.13` | pkg | a notarized third-party pkg |
+| Mac Installer Distribution (3rd Party Mac Developer Installer) | `6.1.8` | `1.2.840.113635.100.4.9` | pkg | Xcode-exported Mac App Store pkgs |
+| Apple package signing (Software Update) | `6.1.29.2` | `1.2.840.113635.100.4.1` | pkg | Xcode's bundled `CoreTypes`, `MobileDevice`, `MobileDeviceDevelopment`, and `XcodeSystemResources` pkgs |
+
+- Types are matched most specific first, so Apple Distribution (6.1.4 + 6.1.7) wins over iPhone Distribution (6.1.4 alone).
+- Several markers are critical on real leaves (for example 6.1.13, 6.1.14, 6.1.8, and on newer certificates 6.1.2, 6.1.4, 6.1.7, 6.1.12). Go rejects unhandled critical extensions, so the verifier treats the whole `1.2.840.113635.100` arc as handled and evaluates the markers itself.
+- Other Apple extensions on these leaves, such as `6.1.32`, `6.1.33`, `6.1.18` (kext signing), and the `5.1` certificate policy, do not affect the type.
+- Not recognized without local evidence: iOS App Store re-signing (Apple iPhone OS Application Signing) and TestFlight (`6.1.25.x`) leaves. They report `untrusted-chain` until a real certificate confirms their markers.
+- Xcode-exported Mac App Store pkgs carry only a CMS `x-signature`, which `pkg-info` reports as `unsupported`, so the Mac Installer Distribution row is reachable only for packages that also carry an RSA `signature`.

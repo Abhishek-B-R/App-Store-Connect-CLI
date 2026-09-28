@@ -92,8 +92,8 @@ func BetaTestersListCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("list", flag.ExitOnError)
 
 	appID := fs.String("app", "", "App Store Connect app ID (or ASC_APP_ID env)")
-	buildID := fs.String("build-id", "", "Build ID to filter")
-	group := fs.String("group", "", "Beta group name or ID to filter")
+	buildID := shared.BindResourceIDFlag(fs, "build-id", "builds", "Build ID to filter")
+	group := shared.BindResourceIDFlag(fs, "group", "betaGroups", "Beta group name or ID to filter")
 	email := fs.String("email", "", "Filter by tester email")
 	firstName := fs.String("first-name", "", "Filter by tester first name (exact match)")
 	lastName := fs.String("last-name", "", "Filter by tester last name (exact match)")
@@ -314,7 +314,7 @@ func rejectBetaTestersNextFlagConflicts(fs *flag.FlagSet, next string, names ...
 func BetaTestersGetCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("view", flag.ExitOnError)
 
-	id := fs.String("id", "", "Beta tester ID")
+	id := shared.BindResourceIDFlag(fs, "id", "betaTesters", "Beta tester ID")
 	output := shared.BindOutputFlags(fs)
 
 	return &ffcli.Command{
@@ -555,7 +555,7 @@ func waitForBetaTesterRemoval(ctx context.Context, client *asc.Client, testerID 
 func BetaTestersAddGroupsCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("add-groups", flag.ExitOnError)
 
-	id := fs.String("id", "", "Beta tester ID")
+	id := shared.BindResourceIDFlag(fs, "id", "betaTesters", "Beta tester ID")
 	groups := shared.BindOnceCSVFlag(fs, "group", "Comma-separated beta group IDs")
 	output := shared.BindOutputFlags(fs)
 
@@ -591,18 +591,31 @@ Examples:
 			requestCtx, cancel := shared.ContextWithTimeout(ctx)
 			defer cancel()
 
+			action := asc.BetaGroupTestersActionAdded
 			if err := client.AddBetaTesterToGroups(requestCtx, testerID, groupIDs); err != nil {
-				return fmt.Errorf("beta-testers add-groups: failed to add groups: %w", err)
+				alreadySatisfied, verificationErr := betaTesterGroupConflictAlreadySatisfied(ctx, client, testerID, groupIDs, err)
+				if verificationErr != nil {
+					return fmt.Errorf("beta-testers add-groups: failed to add groups: %w (failed to verify beta group membership: %w)", err, verificationErr)
+				}
+				if !alreadySatisfied {
+					return fmt.Errorf("beta-testers add-groups: failed to add groups: %w", err)
+				}
+				action = asc.BetaGroupTestersActionSkipped
 			}
 
 			result := &asc.BetaTesterGroupsUpdateResult{
 				TesterID: testerID,
 				GroupIDs: groupIDs,
-				Action:   "added",
+				Action:   action,
 			}
 
 			if err := shared.PrintOutput(result, *output.Output, *output.Pretty); err != nil {
 				return err
+			}
+
+			if action == asc.BetaGroupTestersActionSkipped {
+				fmt.Fprintf(os.Stderr, "Skipped: tester %s already in %d group(s)\n", testerID, len(groupIDs))
+				return nil
 			}
 
 			fmt.Fprintf(os.Stderr, "Successfully added tester %s to %d group(s)\n", testerID, len(groupIDs))
@@ -615,7 +628,7 @@ Examples:
 func BetaTestersRemoveGroupsCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("remove-groups", flag.ExitOnError)
 
-	id := fs.String("id", "", "Beta tester ID")
+	id := shared.BindResourceIDFlag(fs, "id", "betaTesters", "Beta tester ID")
 	groups := shared.BindOnceCSVFlag(fs, "group", "Comma-separated beta group IDs")
 	confirm := fs.Bool("confirm", false, "Confirm removal")
 	output := shared.BindOutputFlags(fs)
@@ -680,7 +693,7 @@ Examples:
 func BetaTestersAddBuildsCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("add-builds", flag.ExitOnError)
 
-	id := fs.String("id", "", "Beta tester ID")
+	id := shared.BindResourceIDFlag(fs, "id", "betaTesters", "Beta tester ID")
 	buildIDs := fs.String("build-id", "", "Comma-separated build IDs")
 	output := shared.BindOutputFlags(fs)
 
@@ -740,7 +753,7 @@ Examples:
 func BetaTestersRemoveBuildsCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("remove-builds", flag.ExitOnError)
 
-	id := fs.String("id", "", "Beta tester ID")
+	id := shared.BindResourceIDFlag(fs, "id", "betaTesters", "Beta tester ID")
 	buildIDs := fs.String("build-id", "", "Comma-separated build IDs")
 	confirm := fs.Bool("confirm", false, "Confirm removal")
 	output := shared.BindOutputFlags(fs)
@@ -805,7 +818,7 @@ Examples:
 func BetaTestersRemoveAppsCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("remove-apps", flag.ExitOnError)
 
-	id := fs.String("id", "", "Beta tester ID")
+	id := shared.BindResourceIDFlag(fs, "id", "betaTesters", "Beta tester ID")
 	apps := shared.BindOnceCSVFlag(fs, "app", "Comma-separated app IDs")
 	confirm := fs.Bool("confirm", false, "Confirm removal")
 	output := shared.BindOutputFlags(fs)
