@@ -49,19 +49,49 @@ type ArtifactProfileSummary struct {
 	ProfileType    string `json:"profileType,omitempty"`
 }
 
-// ArtifactPKGInfo is the offline flat package inspection receipt.
+// ArtifactPKGInfo is the offline flat package or product archive inspection
+// receipt. The app fields and components are set only for product archives.
 type ArtifactPKGInfo struct {
-	SignatureVerification string          `json:"signatureVerification"`
-	Path                  string          `json:"path"`
-	ProductID             string          `json:"productId,omitempty"`
-	Version               string          `json:"version,omitempty"`
-	InstallLocation       string          `json:"installLocation,omitempty"`
-	BundleIDs             []string        `json:"bundleIds,omitempty"`
-	SignerCommonName      string          `json:"signerCommonName,omitempty"`
-	TeamID                string          `json:"teamId,omitempty"`
-	Status                string          `json:"status"`
-	PackageSignature      string          `json:"packageSignature,omitempty"`
-	Signer                *ArtifactSigner `json:"signer"`
+	SignatureVerification string                 `json:"signatureVerification"`
+	Path                  string                 `json:"path"`
+	ProductID             string                 `json:"productId,omitempty"`
+	Version               string                 `json:"version,omitempty"`
+	InstallLocation       string                 `json:"installLocation,omitempty"`
+	BundleIDs             []string               `json:"bundleIds,omitempty"`
+	BundleID              string                 `json:"bundleId,omitempty"`
+	BuildNumber           string                 `json:"buildNumber,omitempty"`
+	MinimumOSVersion      string                 `json:"minimumOSVersion,omitempty"`
+	Platforms             []string               `json:"platforms,omitempty"`
+	HostArchitectures     []string               `json:"hostArchitectures,omitempty"`
+	SignerCommonName      string                 `json:"signerCommonName,omitempty"`
+	TeamID                string                 `json:"teamId,omitempty"`
+	Status                string                 `json:"status"`
+	PackageSignature      string                 `json:"packageSignature,omitempty"`
+	Signer                *ArtifactSigner        `json:"signer"`
+	Components            []ArtifactPKGComponent `json:"components,omitempty"`
+}
+
+// ArtifactPKGComponent is a component package embedded in a product archive.
+type ArtifactPKGComponent struct {
+	Path            string                   `json:"path"`
+	Identifier      string                   `json:"identifier,omitempty"`
+	Version         string                   `json:"version,omitempty"`
+	InstallLocation string                   `json:"installLocation,omitempty"`
+	InstallKBytes   *int64                   `json:"installKBytes,omitempty"`
+	BundleIDs       []string                 `json:"bundleIds,omitempty"`
+	Primary         bool                     `json:"primary,omitempty"`
+	App             *ArtifactPKGComponentApp `json:"app,omitempty"`
+}
+
+// ArtifactPKGComponentApp is the app Info.plist read from a component payload.
+type ArtifactPKGComponentApp struct {
+	Path             string   `json:"path"`
+	BundleID         string   `json:"bundleId,omitempty"`
+	Name             string   `json:"name,omitempty"`
+	Version          string   `json:"version,omitempty"`
+	BuildNumber      string   `json:"buildNumber,omitempty"`
+	MinimumOSVersion string   `json:"minimumOSVersion,omitempty"`
+	Platforms        []string `json:"platforms,omitempty"`
 }
 
 func artifactIPAInfoRows(result *ArtifactIPAInfo) ([]string, [][]string) {
