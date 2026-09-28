@@ -329,6 +329,8 @@ asc screenshots frame --input-dir ./screenshots/raw --output-dir ./screenshots/f
 
 Per-file box settings go in `--overlay-config` entries as `textBox`, `textBoxColor`, `textBoxPadding`, and `textBoxRadius`. See [Frame Screenshots](/commands/screenshots#frame-screenshots) for the defaults and validation rules.
 
+Large batches are CPU-bound. Add `--parallel-workers 4` (up to your CPU count) to render four inputs at once; the receipt order and `--resume` behavior stay the same.
+
 ## Complete Screenshot Workflow Example
 
 Here's a complete workflow for managing screenshots:

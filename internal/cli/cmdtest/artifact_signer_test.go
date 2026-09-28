@@ -117,6 +117,10 @@ func TestRunIPAInfoReportsSignerIdentity(t *testing.T) {
 		"status":                "readable",
 		"codeSignature":         "signed",
 		"signer":                signerJSON(chain),
+		"architectures": []any{
+			map[string]any{"cpuType": artifactstest.CPUTypeARM64, "cpuSubtype": 0, "arch": "arm64", "codeSignature": "signed", "signer": signerJSON(chain)},
+		},
+		"signerConsistent": true,
 		"nestedBundles": []any{map[string]any{
 			"bundleId": "com.example.demo.widget",
 			"path":     "Payload/Demo.app/PlugIns/Widget.appex/Info.plist",

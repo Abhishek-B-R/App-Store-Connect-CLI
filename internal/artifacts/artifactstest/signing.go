@@ -220,6 +220,61 @@ func FatMachO(first, second []byte) []byte {
 	return append(out, second...)
 }
 
+// CPU types written into universal fixture architecture tables.
+const (
+	CPUTypeARM64  uint32 = 0x0100000c
+	CPUTypeX86_64 uint32 = 0x01000007
+)
+
+// FatSlice is one architecture of a universal Mach-O fixture.
+type FatSlice struct {
+	CPUType    uint32
+	CPUSubtype uint32
+	Data       []byte
+}
+
+// UniversalAlignment is the file alignment UniversalMachO uses for slices.
+const UniversalAlignment = 16 << 10
+
+// UniversalMachO lists slices in the architecture table in the given order and
+// stores them in that order at UniversalAlignment boundaries. Wide selects the
+// 64-bit fat header (FAT_MAGIC_64).
+func UniversalMachO(wide bool, slices ...FatSlice) []byte {
+	magic, entrySize := uint32(0xcafebabe), 20
+	if wide {
+		magic, entrySize = 0xcafebabf, 32
+	}
+	offsets := make([]int, len(slices))
+	next := UniversalAlignment
+	for index, slice := range slices {
+		offsets[index] = next
+		next += (len(slice.Data) + UniversalAlignment - 1) / UniversalAlignment * UniversalAlignment
+	}
+	var out []byte
+	out = binary.BigEndian.AppendUint32(out, magic)
+	out = binary.BigEndian.AppendUint32(out, uint32(len(slices)))
+	for index, slice := range slices {
+		entry := binary.BigEndian.AppendUint32(nil, slice.CPUType)
+		entry = binary.BigEndian.AppendUint32(entry, slice.CPUSubtype)
+		if wide {
+			entry = binary.BigEndian.AppendUint64(entry, uint64(offsets[index]))
+			entry = binary.BigEndian.AppendUint64(entry, uint64(len(slice.Data)))
+			entry = binary.BigEndian.AppendUint32(entry, 14)
+			entry = binary.BigEndian.AppendUint32(entry, 0)
+		} else {
+			entry = binary.BigEndian.AppendUint32(entry, uint32(offsets[index]))
+			entry = binary.BigEndian.AppendUint32(entry, uint32(len(slice.Data)))
+			entry = binary.BigEndian.AppendUint32(entry, 14)
+		}
+		out = append(out, entry[:entrySize]...)
+	}
+	for index, slice := range slices {
+		out = append(out, make([]byte, offsets[index]-len(out))...)
+		out = append(out, slice.Data...)
+	}
+	return out
+}
+
 // Xar builds a flat xar archive with uncompressed members. Extra raw XML, such
 // as a signature element, is placed at the start of the table of contents.
 func Xar(t testing.TB, files map[string][]byte, extraTOC string) []byte {

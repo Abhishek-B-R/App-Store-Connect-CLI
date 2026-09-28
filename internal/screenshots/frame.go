@@ -47,6 +47,10 @@ const (
 var koubouVersionPattern = regexp.MustCompile(`(?i)\bv?(\d+\.\d+\.\d+)\b`)
 
 var (
+	// koubouSetupMu serializes the uncached version check and frame setup, so
+	// concurrent renders (screenshots frame --parallel-workers) run each once
+	// instead of racing several `kou setup-frames` downloads.
+	koubouSetupMu             sync.Mutex
 	koubouVersionCacheMu      sync.Mutex
 	cachedKoubouBinaryPath    string
 	cachedKoubouResolvedPATH  string
@@ -1203,14 +1207,21 @@ func ensurePinnedKoubouVersion(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("kou lookup failed: %w", err)
 	}
 
-	koubouVersionCacheMu.Lock()
-	if cachedKoubouVersionIsGood &&
-		cachedKoubouResolvedPATH == resolvedPATH &&
-		cachedKoubouBinaryPath == kouBinaryPath {
-		koubouVersionCacheMu.Unlock()
+	versionCached := func() bool {
+		koubouVersionCacheMu.Lock()
+		defer koubouVersionCacheMu.Unlock()
+		return cachedKoubouVersionIsGood &&
+			cachedKoubouResolvedPATH == resolvedPATH &&
+			cachedKoubouBinaryPath == kouBinaryPath
+	}
+	if versionCached() {
 		return kouBinaryPath, nil
 	}
-	koubouVersionCacheMu.Unlock()
+	koubouSetupMu.Lock()
+	defer koubouSetupMu.Unlock()
+	if versionCached() {
+		return kouBinaryPath, nil
+	}
 
 	cmd := exec.CommandContext(ctx, kouBinaryPath, "--version")
 	output, err := cmd.CombinedOutput()
@@ -1266,14 +1277,21 @@ func ensurePinnedKoubouVersion(ctx context.Context) (string, error) {
 func ensurePinnedKoubouFrames(ctx context.Context, kouBinaryPath string) error {
 	resolvedPATH := os.Getenv("PATH")
 
-	koubouVersionCacheMu.Lock()
-	if cachedKoubouFramesReady &&
-		cachedKoubouResolvedPATH == resolvedPATH &&
-		cachedKoubouBinaryPath == kouBinaryPath {
-		koubouVersionCacheMu.Unlock()
+	framesCached := func() bool {
+		koubouVersionCacheMu.Lock()
+		defer koubouVersionCacheMu.Unlock()
+		return cachedKoubouFramesReady &&
+			cachedKoubouResolvedPATH == resolvedPATH &&
+			cachedKoubouBinaryPath == kouBinaryPath
+	}
+	if framesCached() {
 		return nil
 	}
-	koubouVersionCacheMu.Unlock()
+	koubouSetupMu.Lock()
+	defer koubouSetupMu.Unlock()
+	if framesCached() {
+		return nil
+	}
 
 	cmd := exec.CommandContext(ctx, kouBinaryPath, "setup-frames")
 	output, err := cmd.CombinedOutput()
