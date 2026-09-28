@@ -48,6 +48,14 @@ type IPAManifest struct {
 	CodeSignature      string
 	CodeSignatureError string
 	Signer             *SignerIdentity
+	// Architectures lists every slice of the main executable in universal
+	// header order; a thin executable has one. CodeSignature, CodeSignatureError,
+	// and Signer describe the slice stored first. It is nil when no slice could
+	// be identified.
+	Architectures []ArchitectureSignature
+	// SignerConsistent reports whether every slice has the same signature
+	// classification and signer. It is nil when Architectures is nil.
+	SignerConsistent *bool
 }
 
 // NestedBundle is an extension or App Clip inside the IPA.
@@ -65,7 +73,8 @@ type ProfileSummary struct {
 	ProfileType    string
 }
 
-// PKGManifest is the offline manifest for a flat component package.
+// PKGManifest is the offline manifest for a flat component package or a
+// Distribution-style product archive.
 type PKGManifest struct {
 	ProductID        string
 	Version          string
@@ -74,6 +83,17 @@ type PKGManifest struct {
 	SignerCommonName string
 	TeamID           string
 	Status           string
+	// The fields below are set only for product archives. App fields come from
+	// the primary component's app Info.plist when its payload can be read.
+	BundleID          string
+	BuildNumber       string
+	MinimumOSVersion  string
+	Platforms         []string
+	HostArchitectures []string
+	Components        []PKGComponent
+	// Warnings describe component metadata that could not be read without
+	// making the package unreadable.
+	Warnings []string
 	// PackageSignature classifies the xar signature in the table of contents.
 	PackageSignature      string
 	PackageSignatureError string
@@ -168,7 +188,14 @@ func InspectIPA(source io.ReaderAt, size int64, includeEntitlements, includeProf
 		})
 	}
 	if executableErr == nil {
-		manifest.CodeSignature, manifest.Signer, executableErr = readExecutableSignature(source, executable)
+		var primary int
+		manifest.Architectures, primary, executableErr = readExecutableSignatures(source, executable)
+		if executableErr == nil {
+			slice := manifest.Architectures[primary]
+			manifest.CodeSignature, manifest.CodeSignatureError, manifest.Signer = slice.CodeSignature, slice.CodeSignatureError, slice.Signer
+			consistent := signersConsistent(manifest.Architectures)
+			manifest.SignerConsistent = &consistent
+		}
 	}
 	if executableErr != nil {
 		manifest.CodeSignature, manifest.Signer = SignatureUnreadable, nil
@@ -228,23 +255,23 @@ func mainExecutableMember(files []*zip.File, appRoot, name string) (*zip.File, e
 	return found, nil
 }
 
-func readExecutableSignature(source io.ReaderAt, file *zip.File) (string, *SignerIdentity, error) {
+func readExecutableSignatures(source io.ReaderAt, file *zip.File) ([]ArchitectureSignature, int, error) {
 	size := int64(file.UncompressedSize64)
 	if file.Method == zip.Store && file.CompressedSize64 == file.UncompressedSize64 {
 		// Stored members are addressable, so skipping code pages costs no reads.
 		if offset, err := file.DataOffset(); err == nil {
-			return readMachOSignature(io.NewSectionReader(source, offset, size), size)
+			return readMachOSignatures(io.NewSectionReader(source, offset, size), size)
 		}
 	}
 	if err := compressedExecutableScanError(file.CompressedSize64, file.UncompressedSize64); err != nil {
-		return SignatureUnreadable, nil, err
+		return nil, 0, err
 	}
 	reader, err := file.Open()
 	if err != nil {
-		return SignatureUnreadable, nil, fmt.Errorf("open main executable: %w", err)
+		return nil, 0, fmt.Errorf("open main executable: %w", err)
 	}
 	defer reader.Close()
-	return readMachOSignature(reader, size)
+	return readMachOSignatures(reader, size)
 }
 
 // A compressed executable must be inflated up to its code signature near the
@@ -315,6 +342,10 @@ func readZipPlist(file *zip.File) (bundlePlist, error) {
 	if len(data) > maxPlistBytes {
 		return bundlePlist{}, fmt.Errorf("info.plist exceeds %d bytes", maxPlistBytes)
 	}
+	return decodeBundlePlist(data)
+}
+
+func decodeBundlePlist(data []byte) (bundlePlist, error) {
 	if err := infoplist.ValidateStructure(data); err != nil {
 		return bundlePlist{}, fmt.Errorf("validate Info.plist: %w", err)
 	}
@@ -418,11 +449,12 @@ func stringValue(value any) string {
 	return text
 }
 
-// InspectPKG reads PackageInfo from a flat xar component package. The signer
-// identity is read from the package signature certificates, which are not
-// verified.
+// InspectPKG reads PackageInfo from a flat xar component package, or the
+// Distribution and embedded component packages of a product archive. The
+// signer identity is read from the package signature certificates, which are
+// not verified.
 func InspectPKG(source io.ReaderAt, size int64) (PKGManifest, error) {
-	document, files, err := readXarFiles(source, size)
+	document, heap, files, err := readXarFiles(source, size)
 	if document == nil {
 		return PKGManifest{Status: "unreadable"}, err
 	}
@@ -452,6 +484,13 @@ func InspectPKG(source io.ReaderAt, size int64) (PKGManifest, error) {
 	}
 	info, ok := files["PackageInfo"]
 	if !ok {
+		if distribution := xarChild(document.Files, "Distribution", "file"); distribution != nil {
+			manifest, err := inspectProductArchive(document.Files, *distribution, heap, heap.Size())
+			if err != nil {
+				return withSignature(manifest, "unreadable"), err
+			}
+			return withSignature(manifest, "readable"), nil
+		}
 		return withSignature(PKGManifest{}, "unreadable"), fmt.Errorf("flat pkg has no PackageInfo")
 	}
 	manifest, err := parsePackageInfo(info)
@@ -470,13 +509,24 @@ type packageInfoXML struct {
 }
 
 type packageBundle struct {
-	ID string `xml:"id,attr"`
+	ID           string `xml:"id,attr"`
+	Path         string `xml:"path,attr"`
+	ShortVersion string `xml:"CFBundleShortVersionString,attr"`
+	Version      string `xml:"CFBundleVersion,attr"`
+}
+
+func decodePackageInfo(data []byte) (packageInfoXML, error) {
+	var info packageInfoXML
+	if err := xml.Unmarshal(data, &info); err != nil {
+		return packageInfoXML{}, fmt.Errorf("decode PackageInfo: %w", err)
+	}
+	return info, nil
 }
 
 func parsePackageInfo(data []byte) (PKGManifest, error) {
-	var info packageInfoXML
-	if err := xml.Unmarshal(data, &info); err != nil {
-		return PKGManifest{}, fmt.Errorf("decode PackageInfo: %w", err)
+	info, err := decodePackageInfo(data)
+	if err != nil {
+		return PKGManifest{}, err
 	}
 	ids := make([]string, 0, len(info.Bundles))
 	for _, bundle := range info.Bundles {
@@ -492,19 +542,20 @@ func parsePackageInfo(data []byte) (PKGManifest, error) {
 	}, nil
 }
 
-// readXarFiles returns the decoded table of contents whenever it could be read,
-// even if reading a member fails.
-func readXarFiles(source io.ReaderAt, size int64) (*xarDocument, map[string][]byte, error) {
+// readXarFiles returns the decoded table of contents and the heap whenever the
+// table of contents could be read, even if reading a member fails.
+func readXarFiles(source io.ReaderAt, size int64) (*xarDocument, *io.SectionReader, map[string][]byte, error) {
 	toc, heapStart, err := readXarTOC(source, size)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	document, err := decodeXarTOC(toc)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
-	files, err := xarFilesFromDocument(document, io.NewSectionReader(source, heapStart, size-heapStart), size-heapStart)
-	return &document, files, err
+	heap := io.NewSectionReader(source, heapStart, size-heapStart)
+	files, err := xarFilesFromDocument(document, heap, heap.Size())
+	return &document, heap, files, err
 }
 
 func readXarTOC(source io.ReaderAt, size int64) ([]byte, int64, error) {
@@ -556,6 +607,8 @@ type xarFile struct {
 	Name string  `xml:"name"`
 	Type string  `xml:"type"`
 	Data xarData `xml:"data"`
+	// Files are the members of a directory.
+	Files []xarFile `xml:"file"`
 }
 
 type xarData struct {
@@ -591,41 +644,63 @@ func xarFilesFromDocument(document xarDocument, heap io.ReaderAt, heapSize int64
 		if file.Type != "file" || file.Name != "PackageInfo" {
 			continue
 		}
-		if file.Data.Length < 0 || file.Data.Offset < 0 || file.Data.Size < 0 || file.Data.Length > maxXarFileBytes || file.Data.Size > maxXarFileBytes {
-			return nil, fmt.Errorf("xar file %q is outside the read limit", file.Name)
-		}
-		if file.Data.Offset > heapSize || file.Data.Length > heapSize-file.Data.Offset {
-			return nil, fmt.Errorf("xar file %q is truncated", file.Name)
-		}
-		payload := make([]byte, int(file.Data.Length))
-		if _, err := heap.ReadAt(payload, file.Data.Offset); err != nil {
-			return nil, fmt.Errorf("read xar PackageInfo: %w", err)
-		}
-		switch file.Data.Encoding.Style {
-		case "", "application/octet-stream":
-		case "application/x-gzip":
-			reader, err := zlib.NewReader(bytes.NewReader(payload))
-			if err != nil {
-				return nil, fmt.Errorf("open xar PackageInfo: %w", err)
-			}
-			payload, err = io.ReadAll(io.LimitReader(reader, maxXarFileBytes+1))
-			reader.Close()
-			if err != nil {
-				return nil, fmt.Errorf("read xar PackageInfo: %w", err)
-			}
-			if len(payload) > maxXarFileBytes {
-				return nil, fmt.Errorf("xar PackageInfo exceeds the read limit")
-			}
-		default:
-			return nil, fmt.Errorf("xar file %q uses unsupported encoding %q", file.Name, file.Data.Encoding.Style)
-		}
-		if int64(len(payload)) != file.Data.Size {
-			return nil, fmt.Errorf("xar PackageInfo size does not match its declaration")
+		payload, err := readXarMember(file, heap, heapSize)
+		if err != nil {
+			return nil, err
 		}
 		if _, exists := files[file.Name]; exists {
 			return nil, fmt.Errorf("xar has duplicate PackageInfo entries")
 		}
-		files[file.Name] = append([]byte(nil), payload...)
+		files[file.Name] = payload
 	}
 	return files, nil
+}
+
+// xarMemberSection validates a member's heap range without reading it.
+func xarMemberSection(file xarFile, heap io.ReaderAt, heapSize int64) (*io.SectionReader, error) {
+	if file.Data.Length < 0 || file.Data.Offset < 0 || file.Data.Size < 0 {
+		return nil, fmt.Errorf("xar file %q has a negative size or offset", file.Name)
+	}
+	if file.Data.Offset > heapSize || file.Data.Length > heapSize-file.Data.Offset {
+		return nil, fmt.Errorf("xar file %q is truncated", file.Name)
+	}
+	return io.NewSectionReader(heap, file.Data.Offset, file.Data.Length), nil
+}
+
+// readXarMember reads a small metadata member such as PackageInfo or
+// Distribution into memory.
+func readXarMember(file xarFile, heap io.ReaderAt, heapSize int64) ([]byte, error) {
+	if file.Data.Length > maxXarFileBytes || file.Data.Size > maxXarFileBytes {
+		return nil, fmt.Errorf("xar file %q is outside the read limit", file.Name)
+	}
+	section, err := xarMemberSection(file, heap, heapSize)
+	if err != nil {
+		return nil, err
+	}
+	payload := make([]byte, int(file.Data.Length))
+	if _, err := io.ReadFull(section, payload); err != nil {
+		return nil, fmt.Errorf("read xar %s: %w", file.Name, err)
+	}
+	switch file.Data.Encoding.Style {
+	case "", "application/octet-stream":
+	case "application/x-gzip":
+		reader, err := zlib.NewReader(bytes.NewReader(payload))
+		if err != nil {
+			return nil, fmt.Errorf("open xar %s: %w", file.Name, err)
+		}
+		payload, err = io.ReadAll(io.LimitReader(reader, maxXarFileBytes+1))
+		reader.Close()
+		if err != nil {
+			return nil, fmt.Errorf("read xar %s: %w", file.Name, err)
+		}
+		if len(payload) > maxXarFileBytes {
+			return nil, fmt.Errorf("xar %s exceeds the read limit", file.Name)
+		}
+	default:
+		return nil, fmt.Errorf("xar file %q uses unsupported encoding %q", file.Name, file.Data.Encoding.Style)
+	}
+	if int64(len(payload)) != file.Data.Size {
+		return nil, fmt.Errorf("xar %s size does not match its declaration", file.Name)
+	}
+	return payload, nil
 }

@@ -319,6 +319,18 @@ asc screenshots frame --input-dir ./screenshots/raw --output-dir ./screenshots/f
   --device ipad-air-13 --frame-color blue --title "Plan every trip" --resume
 ```
 
+To keep captions legible on a busy or light background and use a brand font file that is not installed on the machine (for example, a CI runner), add a text box and pass the font file to `--font`:
+
+```bash  theme={null}
+asc screenshots frame --input-dir ./screenshots/raw --output-dir ./screenshots/framed \
+  --device iphone-air --title "Plan every trip" --bg-color "#f2c14e" \
+  --font ./brand/Brand-Bold.ttf --text-box --text-box-color "#1b3a5bcc"
+```
+
+Per-file box settings go in `--overlay-config` entries as `textBox`, `textBoxColor`, `textBoxPadding`, and `textBoxRadius`. See [Frame Screenshots](/commands/screenshots#frame-screenshots) for the defaults and validation rules.
+
+Large batches are CPU-bound. Add `--parallel-workers 4` (up to your CPU count) to render four inputs at once; the receipt order and `--resume` behavior stay the same.
+
 ## Complete Screenshot Workflow Example
 
 Here's a complete workflow for managing screenshots:

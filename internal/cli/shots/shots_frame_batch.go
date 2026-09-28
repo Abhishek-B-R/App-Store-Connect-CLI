@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"unicode"
 
 	"github.com/rudrankriyam/App-Store-Connect-CLI/internal/asc"
@@ -20,6 +21,7 @@ type frameBatchOptions struct {
 	inputDir  string
 	outputDir string
 	resume    bool
+	workers   int
 	settings  frameRenderSettings
 	output    string
 	pretty    bool
@@ -121,10 +123,8 @@ func runFrameBatch(ctx context.Context, opts frameBatchOptions) error {
 		Files:      make([]asc.ScreenshotFrameBatchFile, 0, len(jobs)),
 	}
 
-	render := func(state *screenshots.FrameResumeState, root rootfs.Root) {
-		for _, job := range jobs {
-			receipt.Files = append(receipt.Files, frameBatchFile(ctx, inputRoot, outputRoot, job, opts.settings, state, root))
-		}
+	render := func(store *frameResumeStore) {
+		receipt.Files = renderFrameBatch(ctx, inputRoot, outputRoot, jobs, opts.settings, store, opts.workers)
 	}
 	if opts.resume {
 		root, err := frameResumeRoot()
@@ -141,14 +141,14 @@ func runFrameBatch(ctx context.Context, opts frameBatchOptions) error {
 			if loadErr != nil {
 				return fmt.Errorf("screenshots frame: read resume state: %w", loadErr)
 			}
-			render(&state, root)
+			render(&frameResumeStore{state: &state, root: root})
 			return nil
 		})
 		if err != nil {
 			return err
 		}
 	} else {
-		render(nil, rootfs.Root{})
+		render(nil)
 	}
 
 	for _, file := range receipt.Files {
@@ -175,12 +175,38 @@ func runFrameBatch(ctx context.Context, opts frameBatchOptions) error {
 	return shared.NewReportedError(errors.New(message))
 }
 
+// renderFrameBatch frames jobs with up to workers renders in flight and
+// returns one receipt row per job in input order, whatever order the renders
+// finish in. Each render is an independent Koubou run with its own snapshot,
+// timeout, and rooted publish, so a failure stays confined to its row.
+func renderFrameBatch(ctx context.Context, inputRoot, outputRoot rootfs.Root, jobs []frameBatchJob, settings frameRenderSettings, store *frameResumeStore, workers int) []asc.ScreenshotFrameBatchFile {
+	files := make([]asc.ScreenshotFrameBatchFile, len(jobs))
+	workers = max(1, min(workers, len(jobs)))
+	next := make(chan int)
+	var wg sync.WaitGroup
+	for range workers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for index := range next {
+				files[index] = frameBatchFile(ctx, inputRoot, outputRoot, jobs[index], settings, store)
+			}
+		}()
+	}
+	for index := range jobs {
+		next <- index
+	}
+	close(next)
+	wg.Wait()
+	return files
+}
+
 // frameBatchFile renders one batch input with its own timeout and converts the
 // outcome into a receipt row. The input is snapshotted through the retained
 // --input-dir root, so replacing it after enumeration (for example with a
 // symlink) cannot redirect the render outside that directory. The image is
 // published through the retained outputRoot for the same reason.
-func frameBatchFile(ctx context.Context, inputRoot, outputRoot rootfs.Root, job frameBatchJob, settings frameRenderSettings, state *screenshots.FrameResumeState, root rootfs.Root) asc.ScreenshotFrameBatchFile {
+func frameBatchFile(ctx context.Context, inputRoot, outputRoot rootfs.Root, job frameBatchJob, settings frameRenderSettings, store *frameResumeStore) asc.ScreenshotFrameBatchFile {
 	file := asc.ScreenshotFrameBatchFile{Input: job.input, Path: job.output}
 	if err := ctx.Err(); err != nil {
 		file.Status = asc.ScreenshotFrameBatchStatusFailed
@@ -200,7 +226,7 @@ func frameBatchFile(ctx context.Context, inputRoot, outputRoot rootfs.Root, job 
 	openInput := func(ctx context.Context) (*screenshots.FrameInputSnapshot, error) {
 		return screenshots.OpenFrameInputSnapshotInRoot(ctx, inputRoot, filepath.Base(job.input))
 	}
-	result, err := frameSnapshot(fileCtx, openInput, request, settings, state, root, &outputRoot)
+	result, err := frameSnapshot(fileCtx, openInput, request, settings, store, &outputRoot)
 	if err != nil {
 		file.Status = asc.ScreenshotFrameBatchStatusFailed
 		file.Error = err.Error()
