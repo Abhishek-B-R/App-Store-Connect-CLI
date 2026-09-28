@@ -30,8 +30,10 @@ func IPAInfoCommand() *ffcli.Command {
 
 The command does not upload the artifact or call Apple. An unreadable archive or an IPA without an embedded profile exits 1 after writing a receipt.
 Status readable means metadata was parsed. Status unsigned means no embedded profile was found; it is not a code-signature verdict.
-codeSignature classifies the main executable's embedded code signature as signed, ad-hoc, unsigned, or unreadable. For a universal binary, the slice stored first is read.
+codeSignature classifies the main executable's embedded code signature as signed, ad-hoc, unsigned, or unreadable. For a universal binary, codeSignature and signer describe the slice stored first.
 signer describes the leaf certificate in a signed executable's CMS signature and is null otherwise. teamId comes from that certificate, or from the embedded profile when no certificate provides one.
+architectures lists every slice of the main executable in universal header order, with cpuType, cpuSubtype, the lipo arch name, codeSignature, and signer; a thin executable has one entry.
+signerConsistent is true when every slice has the same codeSignature and signer certificate. A false value prints a warning to stderr and does not change the exit code.
 An unreadable code signature prints a warning to stderr and does not change the exit code. Signatures and certificate chains are not verified, and signatureVerification is always not-verified.
 
 Examples:
@@ -137,6 +139,9 @@ func runArtifactInfo(ctx context.Context, args []string, config artifactInfoConf
 		if manifest.CodeSignatureError != "" {
 			fmt.Fprintf(os.Stderr, "Warning: ipa-info: code signature is unreadable: %s\n", manifest.CodeSignatureError)
 		}
+		if manifest.SignerConsistent != nil && !*manifest.SignerConsistent {
+			fmt.Fprintf(os.Stderr, "Warning: ipa-info: architecture slices are not signed consistently: %s\n", architectureSignatureSummary(manifest.Architectures))
+		}
 		if inspectErr != nil || manifest.Status != "readable" {
 			if inspectErr == nil {
 				inspectErr = fmt.Errorf("IPA has no embedded profile; code signature was not verified")
@@ -184,6 +189,16 @@ func ipaReceipt(path string, manifest artifacts.IPAManifest) *asc.ArtifactIPAInf
 		NestedBundles:         make([]asc.ArtifactNestedBundle, 0, len(manifest.NestedBundles)),
 		CodeSignature:         manifest.CodeSignature,
 		Signer:                signerReceipt(manifest.Signer),
+		SignerConsistent:      manifest.SignerConsistent,
+	}
+	for _, architecture := range manifest.Architectures {
+		info.Architectures = append(info.Architectures, asc.ArtifactArchitecture{
+			CPUType:       architecture.CPUType,
+			CPUSubtype:    architecture.CPUSubtype,
+			Arch:          architecture.Arch,
+			CodeSignature: architecture.CodeSignature,
+			Signer:        signerReceipt(architecture.Signer),
+		})
 	}
 	for _, nested := range manifest.NestedBundles {
 		info.NestedBundles = append(info.NestedBundles, asc.ArtifactNestedBundle{
@@ -204,6 +219,23 @@ func ipaReceipt(path string, manifest artifacts.IPAManifest) *asc.ArtifactIPAInf
 		}
 	}
 	return info
+}
+
+// architectureSignatureSummary describes each slice's signature for the
+// inconsistent-signer warning.
+func architectureSignatureSummary(architectures []artifacts.ArchitectureSignature) string {
+	parts := make([]string, 0, len(architectures))
+	for _, architecture := range architectures {
+		switch {
+		case architecture.Signer != nil:
+			parts = append(parts, fmt.Sprintf("%s %s by %q (SHA-256 %s)", architecture.Arch, architecture.CodeSignature, architecture.Signer.CommonName, architecture.Signer.SHA256Fingerprint))
+		case architecture.CodeSignatureError != "":
+			parts = append(parts, fmt.Sprintf("%s %s (%s)", architecture.Arch, architecture.CodeSignature, architecture.CodeSignatureError))
+		default:
+			parts = append(parts, architecture.Arch+" "+architecture.CodeSignature)
+		}
+	}
+	return strings.Join(parts, ", ")
 }
 
 func pkgReceipt(path string, manifest artifacts.PKGManifest) *asc.ArtifactPKGInfo {

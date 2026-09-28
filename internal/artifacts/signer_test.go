@@ -204,8 +204,8 @@ func TestReadMachOSignatureSurvivesTruncation(t *testing.T) {
 	executable := artifactstest.FatMachO(artifactstest.MachO(artifactstest.Superblob(artifactstest.CodeDirectorySlot(), artifactstest.CMSSlot(cms))), artifactstest.MachO(nil))
 	for length := 0; length < len(executable); length += 97 {
 		data := executable[:length]
-		status, _, _ := readMachOSignature(bytes.NewReader(data), int64(len(data)))
-		if status == "signed" && length < 4096 {
+		slices, primary, err := readMachOSignatures(bytes.NewReader(data), int64(len(data)))
+		if err == nil && slices[primary].CodeSignature == "signed" && length < 4096 {
 			t.Fatalf("length %d reported signed", length)
 		}
 	}
