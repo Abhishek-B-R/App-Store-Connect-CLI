@@ -470,6 +470,22 @@ the App Store Connect web-client source captured for issue #2299:
   current relationship map, including `bundleIdCapabilities`, and changes only
   the name plus the private team attribute required by the endpoint. A
   post-write detail read must match the requested name and identifier.
+  Because the PATCH echoes `bundleIdCapabilities` back as the complete set,
+  rename applies the same capability completeness check as `domains set`
+  (below) to the preflight read before sending the PATCH, and again to the
+  post-write read: no `next` link, and either an exact `paging.total` or the
+  captured populated-linkage placeholder. The request sent to Apple is
+  unchanged. A 2026-09-28 live capture on the disposable team (`asc web
+  service-ids create --identifier com.rorkai.asc.capture.services.t1790609684
+  --name "asc capture temp" --confirm`, then `asc web service-ids view
+  --service-id ID --output json`, then `asc web service-ids delete --service-id
+  ID --confirm`; a follow-up view returned 404 and the list had no match)
+  showed that a Services ID with zero capabilities returns
+  `{"meta":{"paging":{"total":0,"limit":2147483647}},"data":[],"links":{"self":...,"related":...}}`
+  with no `next` link. Its exact zero total proves completeness, so renaming a
+  capability-less Services ID keeps working. The sanitized relationship is
+  checked in as `internal/web/testdata/service_id_empty_capabilities_relationship.json`,
+  with the captured resource ID in its links replaced by `service-1`.
 - `asc web service-ids delete --service-id ID --confirm` sends
   logical `DELETE /services-account/v1/bundleIds/{id}` as the captured actual
   `POST` plus `X-HTTP-Method-Override: DELETE` and a JSON body containing the
