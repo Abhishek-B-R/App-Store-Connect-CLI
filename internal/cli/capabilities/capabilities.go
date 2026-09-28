@@ -598,8 +598,8 @@ func capabilityRows() []Capability {
 			APIResources: []string{
 				"cloudContainers",
 			},
-			Notes:      []string{"List uses the captured Developer Portal web-session collection. create validates identifier, name, and --confirm, then stops. No accepted create request has been captured, so create does not open a session or call Apple. Update, delete, and detail remain unavailable."},
-			NextAction: "Use asc web icloud-containers list. Do not treat create as a successful write.",
+			Notes:      []string{"List uses the captured Developer Portal web-session collection. create sends a JSON:API POST to the same cloudContainers collection and verifies the new container by reading the collections back. iCloud containers can never be deleted. Rename, delete, and detail remain unavailable."},
+			NextAction: "Use asc web icloud-containers list, or asc web icloud-containers create --confirm for a permanent new container.",
 		},
 		{
 			Area:       "signing",

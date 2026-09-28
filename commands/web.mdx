@@ -824,13 +824,14 @@ asc web auth login --apple-id "user@example.com"
 
 ### `asc web icloud-containers`
 
-Read iCloud container registrations through the selected Apple Developer team.
-The public App Store Connect API does not expose this Developer Portal
-collection.
+List and create iCloud container registrations through the selected Apple
+Developer team. The public App Store Connect API does not expose this Developer
+Portal collection.
 
 Available commands:
 
 * `asc web icloud-containers list` - list visible containers
+* `asc web icloud-containers create` - create one permanent container
 
 Pass `--hidden` to request Apple's hidden-container collection. The web-session
 request asks for up to 1,000 resources (`limit=1000`, `offset=0`, sorted by name)
@@ -839,15 +840,25 @@ Apple response envelope, including any links and paging metadata; table and
 Markdown output show the resource ID, name, identifier, prefix, hidden state,
 permissions, and response ID.
 
-This read-only slice does not create, rename, delete, or inspect an individual
-container. Use the opaque IDs and identifiers only as input to a future command
-once Apple request contracts for those operations are captured.
+`create` requires `--identifier`, `--name`, and `--confirm`. **iCloud containers
+can never be deleted**, so the identifier stays reserved for your team. The
+identifier must start with `iCloud.` followed by a reverse-DNS string of
+letters, digits, hyphens, and dots; the CLI does not add the prefix for you.
+The command refuses an identifier that already appears in the visible or hidden
+collection, then reads both collections again after Apple accepts the create.
+It prints a receipt with `containerId`, `identifier`, `name`, `prefix`,
+`verified`, and `permanent: true` only when the new container is found. If the
+outcome cannot be verified, run `asc web icloud-containers list` before
+retrying; the create request is never retried automatically.
+
+Renaming, deleting, or inspecting an individual container is not supported.
 
 Examples:
 
 ```bash  theme={null}
 asc web icloud-containers list --output table
 asc web icloud-containers list --hidden --output json
+asc web icloud-containers create --identifier "iCloud.com.example.app" --name "Example" --confirm
 ```
 
 ### `asc web privacy`

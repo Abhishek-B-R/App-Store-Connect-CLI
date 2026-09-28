@@ -7,7 +7,29 @@ import (
 	rootcmd "github.com/rudrankriyam/App-Store-Connect-CLI/cmd"
 )
 
-func TestWebICloudContainersCreateRunReportsRefusalOnce(t *testing.T) {
+func TestWebICloudContainersCreateRunRejectsUnprefixedIdentifier(t *testing.T) {
+	setCmdtestHome(t)
+	t.Setenv("ASC_TELEMETRY_DISABLED", "1")
+	var code int
+	stdout, stderr := captureOutput(t, func() {
+		code = rootcmd.Run([]string{
+			"web", "icloud-containers", "create",
+			"--identifier", "com.example.app",
+			"--name", "Example", "--confirm",
+		}, "1.2.3")
+	})
+	if code != rootcmd.ExitUsage {
+		t.Fatalf("exit code = %d, want %d; stderr = %q", code, rootcmd.ExitUsage, stderr)
+	}
+	if stdout != "" {
+		t.Fatalf("stdout = %q, want empty", stdout)
+	}
+	if count := strings.Count(stderr, `Error: --identifier must start with "iCloud."`); count != 1 {
+		t.Fatalf("prefix diagnostic count = %d, want 1; stderr = %q", count, stderr)
+	}
+}
+
+func TestWebICloudContainersCreateRunRequiresConfirm(t *testing.T) {
 	setCmdtestHome(t)
 	t.Setenv("ASC_TELEMETRY_DISABLED", "1")
 	var code int
@@ -15,28 +37,21 @@ func TestWebICloudContainersCreateRunReportsRefusalOnce(t *testing.T) {
 		code = rootcmd.Run([]string{
 			"web", "icloud-containers", "create",
 			"--identifier", "iCloud.com.example.app",
-			"--name", "Example", "--confirm",
+			"--name", "Example",
 		}, "1.2.3")
 	})
-	if code != rootcmd.ExitError {
-		t.Fatalf("exit code = %d, want %d", code, rootcmd.ExitError)
+	if code != rootcmd.ExitUsage {
+		t.Fatalf("exit code = %d, want %d; stderr = %q", code, rootcmd.ExitUsage, stderr)
 	}
-	if stdout != "" {
-		t.Fatalf("stdout = %q, want empty", stdout)
-	}
-	if count := strings.Count(stderr, "no accepted write request has been captured"); count != 1 {
-		t.Fatalf("refusal count = %d, want 1; stderr = %q", count, stderr)
+	if stdout != "" || !strings.Contains(stderr, "--confirm is required") {
+		t.Fatalf("stdout = %q, stderr = %q; want only the --confirm diagnostic", stdout, stderr)
 	}
 }
 
 func TestWebICloudContainersCreateRunRejectsUnsupportedFlags(t *testing.T) {
 	setCmdtestHome(t)
 	t.Setenv("ASC_TELEMETRY_DISABLED", "1")
-	for _, flag := range []string{
-		"--apple-id=user@example.com", "--two-factor-code-command=unused",
-		"--provider-id=123", "--public-provider-id=team", "--developer-team=team",
-		"--output=invalid", "--pretty",
-	} {
+	for _, flag := range []string{"--hidden", "--paginate", "--container-id=cloud-1"} {
 		t.Run(flag, func(t *testing.T) {
 			var code int
 			stdout, stderr := captureOutput(t, func() {
