@@ -364,3 +364,32 @@ func TestXarChecksumHash(t *testing.T) {
 		}
 	}
 }
+
+func TestVerifyIPARejectsDuplicateCodeResources(t *testing.T) {
+	chain := artifactstest.NewTrustChain(t, validFrom, validUntil)
+	signed := artifactstest.SignedMachO(t, sealedOptions(&chain))
+	var buffer bytes.Buffer
+	writer := zip.NewWriter(&buffer)
+	for _, member := range []struct {
+		name string
+		data []byte
+	}{
+		{"Payload/Demo.app/Info.plist", testInfoPlist},
+		{"Payload/Demo.app/Demo", signed},
+		{"Payload/Demo.app/_CodeSignature/CodeResources", testCodeResources},
+		{"Payload/Demo.app/_CodeSignature/CodeResources", append(append([]byte(nil), testCodeResources...), ' ')},
+		{"Payload/Demo.app/embedded.mobileprovision", []byte(`<plist version="1.0"><dict><key>Entitlements</key><dict/></dict></plist>`)},
+	} {
+		entry, err := writer.CreateHeader(&zip.FileHeader{Name: member.name, Method: zip.Deflate})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := entry.Write(member.data); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	expectVerification(t, verifyIPA(t, buffer.Bytes(), testPolicy(chain)), VerificationInvalid, "duplicate CodeResources entries")
+}

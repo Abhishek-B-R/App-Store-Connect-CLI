@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"hash"
 	"io"
+	"path"
 
 	"howett.net/plist"
 )
@@ -497,8 +498,12 @@ func verifyIPACodeSignature(source io.ReaderAt, files []*zip.File, appRoot strin
 	if status != SignatureSigned && status != SignatureAdHoc {
 		return verifyCodeSignature(codeSignatureInputs{status: status, readErr: readErr}, policy)
 	}
+	codeResources, err := findMember(files, appRoot+"_CodeSignature/CodeResources")
+	if err != nil {
+		return SignatureVerification{Status: VerificationInvalid, Detail: err.Error()}
+	}
 	bundleFiles := map[int][]byte{}
-	for index, member := range map[int]*zip.File{slotInfoPlist: infoPlist, slotResourceDir: findMember(files, appRoot+"_CodeSignature/CodeResources")} {
+	for index, member := range map[int]*zip.File{slotInfoPlist: infoPlist, slotResourceDir: codeResources} {
 		if member == nil {
 			continue
 		}
@@ -517,13 +522,19 @@ func verifyIPACodeSignature(source io.ReaderAt, files []*zip.File, appRoot strin
 	}, policy)
 }
 
-func findMember(files []*zip.File, name string) *zip.File {
+// findMember returns the one file named name. Duplicate entries are rejected
+// because ZIP readers disagree on which of them is used.
+func findMember(files []*zip.File, name string) (*zip.File, error) {
+	var found *zip.File
 	for _, file := range files {
 		if zipMemberName(file.Name) == name && !file.FileInfo().IsDir() {
-			return file
+			if found != nil {
+				return nil, fmt.Errorf("IPA has duplicate %s entries", path.Base(name))
+			}
+			found = file
 		}
 	}
-	return nil
+	return found, nil
 }
 
 func readZipMember(file *zip.File, limit int64) ([]byte, error) {
