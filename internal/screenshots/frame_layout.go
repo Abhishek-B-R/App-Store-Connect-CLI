@@ -96,6 +96,10 @@ func textContentItems(opts *CanvasOptions, layout textLayout) []koubouDefaultCon
 		return nil
 	}
 	items := make([]koubouDefaultContentItem, 0, 2)
+	fontFamily := opts.Font
+	if opts.FontFile != nil {
+		fontFamily = opts.FontFile.workName()
+	}
 	if opts.Title != "" {
 		color := opts.TitleColor
 		if color == "" {
@@ -108,9 +112,10 @@ func textContentItems(opts *CanvasOptions, layout textLayout) []koubouDefaultCon
 			Size:       layout.titleSize,
 			Weight:     "bold",
 			Color:      color,
-			FontFamily: opts.Font,
+			FontFamily: fontFamily,
 			Alignment:  koubouCenterAlignment,
 			MaxWidth:   layout.maxWidth,
+			Box:        opts.TextBox.koubouBox(layout.titleSize),
 		})
 	}
 	if opts.Subtitle != "" {
@@ -128,9 +133,10 @@ func textContentItems(opts *CanvasOptions, layout textLayout) []koubouDefaultCon
 			Position:   [2]string{"50%", subtitleY},
 			Size:       layout.subtitleSize,
 			Color:      color,
-			FontFamily: opts.Font,
+			FontFamily: fontFamily,
 			Alignment:  koubouCenterAlignment,
 			MaxWidth:   layout.maxWidth,
+			Box:        opts.TextBox.koubouBox(layout.subtitleSize),
 		})
 	}
 	return items

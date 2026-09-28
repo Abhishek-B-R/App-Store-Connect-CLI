@@ -1150,3 +1150,53 @@ func TestRunKoubouGenerate_NotFoundIncludesPinnedInstallHint(t *testing.T) {
 		t.Fatalf("expected pinned install command in error, got %v", err)
 	}
 }
+
+func TestRunKoubouGenerate_ConcurrentCallsRunSetupOnce(t *testing.T) {
+	resetKoubouVersionCacheForTest()
+
+	binDir := t.TempDir()
+	logPath := filepath.Join(t.TempDir(), "kou.log")
+	writeExecutable(t, filepath.Join(binDir, "kou"), `#!/bin/sh
+set -eu
+if [ "$1" = "--version" ]; then
+  echo "version" >> "$KOU_LOG_PATH"
+  echo "kou 0.20.0"
+  exit 0
+fi
+if [ "$1" = "setup-frames" ]; then
+  echo "setup-frames" >> "$KOU_LOG_PATH"
+  /bin/sleep 0.2
+  exit 0
+fi
+if [ "$1" = "generate" ]; then
+  echo '[{"name":"framed","path":"output/framed.png","success":true,"error":""}]'
+  exit 0
+fi
+echo "unsupported args" >&2
+exit 1
+`)
+	t.Setenv("KOU_LOG_PATH", logPath)
+	t.Setenv("PATH", binDir)
+
+	const callers = 4
+	errs := make(chan error, callers)
+	for range callers {
+		go func() {
+			_, err := runKoubouGenerate(context.Background(), "frame.yaml")
+			errs <- err
+		}()
+	}
+	for range callers {
+		if err := <-errs; err != nil {
+			t.Fatalf("runKoubouGenerate() error = %v", err)
+		}
+	}
+
+	logBytes, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("ReadFile(%q) error = %v", logPath, err)
+	}
+	if got := strings.TrimSpace(string(logBytes)); got != "version\nsetup-frames" {
+		t.Fatalf("concurrent renders must check the version and set up frames once, got %q", got)
+	}
+}
