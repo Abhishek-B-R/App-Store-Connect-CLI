@@ -18,12 +18,16 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/rudrankriyam/App-Store-Connect-CLI/internal/readonly"
 	"github.com/rudrankriyam/App-Store-Connect-CLI/internal/urlsanitize"
 )
 
 // newRequest creates a new HTTP request with JWT authentication
 func (c *Client) newRequest(ctx context.Context, method, path string, body io.Reader) (*http.Request, error) {
 	if err := validateAPIPath(path); err != nil {
+		return nil, err
+	}
+	if err := readonly.Check(ctx, method, readonly.Target(path)); err != nil {
 		return nil, err
 	}
 
@@ -107,11 +111,17 @@ func GenerateJWT(keyID, issuerID string, privateKey *ecdsa.PrivateKey) (string, 
 // Mutating requests are throttled and retried only when App Store Connect
 // rejects them with 429; see isRateLimitRejection.
 func (c *Client) do(ctx context.Context, method, path string, body io.Reader) ([]byte, error) {
+	return c.doWithHTTPClient(ctx, method, path, body, c.httpClient)
+}
+
+// doWithHTTPClient preserves the shared request/retry behavior while allowing
+// narrowly scoped callers to override only the HTTP client's redirect policy.
+func (c *Client) doWithHTTPClient(ctx context.Context, method, path string, body io.Reader, httpClient *http.Client) ([]byte, error) {
 	if err := validateMutatingRequestTarget(method, path); err != nil {
 		return nil, err
 	}
 
-	request, err := c.replayableRequest(method, path, body)
+	request, err := c.replayableRequestWithHTTPClient(method, path, body, httpClient)
 	if err != nil {
 		return nil, err
 	}
@@ -154,7 +164,7 @@ func (c *Client) doAppBuildUploadsRead(ctx context.Context, appID, path string) 
 			return nil, requestErr
 		}
 		if !appVerified {
-			_, verifyErr := c.doOnce(ctx, http.MethodGet, fmt.Sprintf("/v1/apps/%s", appID), nil)
+			_, verifyErr := c.doOnce(ctx, http.MethodGet, fmt.Sprintf("/v1/apps/%s", appID), nil, c.httpClient)
 			if verifyErr != nil {
 				if IsNotFound(verifyErr) {
 					return nil, requestErr
@@ -204,6 +214,10 @@ func (c *Client) doMutation(ctx context.Context, request func(context.Context) (
 // replayableRequest buffers the request body so every attempt sends the
 // identical payload from a fresh reader.
 func (c *Client) replayableRequest(method, path string, body io.Reader) (func(context.Context) ([]byte, error), error) {
+	return c.replayableRequestWithHTTPClient(method, path, body, c.httpClient)
+}
+
+func (c *Client) replayableRequestWithHTTPClient(method, path string, body io.Reader, httpClient *http.Client) (func(context.Context) ([]byte, error), error) {
 	var bodyBytes []byte
 	if body != nil {
 		var err error
@@ -218,7 +232,7 @@ func (c *Client) replayableRequest(method, path string, body io.Reader) (func(co
 		if bodyBytes != nil {
 			reader = bytes.NewReader(bodyBytes)
 		}
-		return c.doOnce(requestCtx, method, path, reader)
+		return c.doOnce(requestCtx, method, path, reader, httpClient)
 	}, nil
 }
 
@@ -241,21 +255,41 @@ func (c *Client) doWithMutatingRequestLimiter(ctx context.Context, request func(
 	}
 
 	requestTimeout, hasDeadline := requestTimeoutBudget(ctx)
-	limiter := c.getMutatingRequestLimiter()
 
-	select {
-	case limiter <- struct{}{}:
-		defer func() { <-limiter }()
-		if err := ctx.Err(); err != nil {
-			return nil, fmt.Errorf("wait for mutating request slot: %w", err)
+	// Ordinary writes take a default-limit slot first, then a slot under the
+	// client-wide ceiling; bulk writes take only the ceiling slot. Bulk writes
+	// never hold a default-limit slot, so the fixed acquisition order cannot
+	// deadlock.
+	if !usesBulkMutatingRequestLimit(ctx) {
+		release, err := acquireMutatingRequestSlot(ctx, c.getMutatingRequestLimiter())
+		if err != nil {
+			return nil, err
 		}
-	case <-ctx.Done():
-		return nil, fmt.Errorf("wait for mutating request slot: %w", ctx.Err())
+		defer release()
 	}
+	release, err := acquireMutatingRequestSlot(ctx, c.getBulkMutatingRequestLimiter())
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 
 	requestCtx, cancel := deriveMutatingRequestContext(ctx, requestTimeout, hasDeadline)
 	defer cancel()
 	return request(requestCtx)
+}
+
+func acquireMutatingRequestSlot(ctx context.Context, limiter chan struct{}) (func(), error) {
+	select {
+	case limiter <- struct{}{}:
+		release := func() { <-limiter }
+		if err := ctx.Err(); err != nil {
+			release()
+			return nil, fmt.Errorf("wait for mutating request slot: %w", err)
+		}
+		return release, nil
+	case <-ctx.Done():
+		return nil, fmt.Errorf("wait for mutating request slot: %w", ctx.Err())
+	}
 }
 
 func requestTimeoutBudget(ctx context.Context) (time.Duration, bool) {
@@ -291,7 +325,7 @@ func deriveMutatingRequestContext(ctx context.Context, requestTimeout time.Durat
 	}
 }
 
-func (c *Client) doOnce(ctx context.Context, method, path string, body io.Reader) ([]byte, error) {
+func (c *Client) doOnce(ctx context.Context, method, path string, body io.Reader, httpClient *http.Client) ([]byte, error) {
 	start := time.Now()
 	debugSettings := resolveDebugSettings()
 
@@ -310,7 +344,7 @@ func (c *Client) doOnce(ctx context.Context, method, path string, body io.Reader
 		)
 	}
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := httpClient.Do(req)
 	elapsed := time.Since(start)
 
 	if err != nil {
@@ -772,7 +806,7 @@ func (c *Client) doStream(ctx context.Context, path string, accept string) (*htt
 		req.Header.Set("Accept", accept)
 	}
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := doStreamingRequest(c.httpClient, req)
 	if err != nil {
 		return nil, fmt.Errorf("request failed: %w", err)
 	}
@@ -796,8 +830,7 @@ func (c *Client) doStreamNoAuth(ctx context.Context, rawURL, accept string) (*ht
 		req.Header.Set("Accept", accept)
 	}
 
-	client := clientWithoutRedirects(c.httpClient)
-	resp, err := client.Do(req)
+	resp, err := doStreamingRequest(clientWithoutRedirects(c.httpClient), req)
 	if err != nil {
 		return nil, newSanitizedNoAuthStreamError("download request", rawURL, err)
 	}
@@ -846,12 +879,25 @@ func ParseErrorWithStatus(body []byte, statusCode int) error {
 
 	if err := json.Unmarshal(body, &errResp); err == nil && len(errResp.Errors) > 0 {
 		associatedErrors := parseAssociatedErrors(errResp.Errors[0].Meta)
+		allCodes := make([]string, 0, len(errResp.Errors))
+		allDetails := make([]string, 0, len(errResp.Errors))
+		entries := make([]APIErrorEntry, 0, len(errResp.Errors))
+		for _, entry := range errResp.Errors {
+			if code := strings.TrimSpace(entry.Code); code != "" {
+				allCodes = append(allCodes, code)
+			}
+			allDetails = append(allDetails, entry.Detail)
+			entries = append(entries, APIErrorEntry{Code: strings.TrimSpace(entry.Code), Detail: entry.Detail})
+		}
 		return &APIError{
 			Code:             errResp.Errors[0].Code,
 			Title:            errResp.Errors[0].Title,
 			Detail:           errResp.Errors[0].Detail,
 			StatusCode:       statusCode,
 			AssociatedErrors: associatedErrors,
+			AllCodes:         allCodes,
+			AllDetails:       allDetails,
+			Entries:          entries,
 			Remediation:      remediationForAPIError(errResp.Errors[0].Code),
 		}
 	}

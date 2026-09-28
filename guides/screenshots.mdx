@@ -39,16 +39,6 @@ asc screenshots sizes --all
 ### Upload Screenshots
 
 <Steps>
-  <Step title="Find your version localization ID">
-    List localizations for your app version:
-
-    ```bash  theme={null}
-    asc localizations list --version "VERSION_ID" --output json
-    ```
-
-    Extract the localization ID for your target locale (e.g., `en-US`).
-  </Step>
-
   <Step title="Prepare screenshot files">
     Organize screenshots by device type:
 
@@ -66,23 +56,44 @@ asc screenshots sizes --all
   </Step>
 
   <Step title="Upload iPhone screenshots">
+    Select the localization with the app, version string, and locale. No
+    localization ID lookup is needed:
+
     ```bash  theme={null}
     asc screenshots upload \
-      --version-localization "LOCALIZATION_ID" \
+      --app "YOUR_APP_ID" \
+      --version "1.2.3" \
+      --locale "en-US" \
       --path "./screenshots/iphone" \
-      --device-type "IPHONE_65"
+      --device-type "IPHONE_65" \
+      --concurrency 4
     ```
+
+    With `--locale`, `--path` points directly at that locale's screenshots.
+    The version must already have an `en-US` localization; otherwise the
+    command fails and lists the locales the version has.
+
+    Uploads within one screenshot set are bounded to four concurrent requests
+    by default. Use `--concurrency 1` for serial uploads or any value through
+    `8` when the API and network can sustain more fan-out; output ordering stays
+    deterministic.
   </Step>
 
   <Step title="Upload iPad screenshots">
     ```bash  theme={null}
     asc screenshots upload \
-      --version-localization "LOCALIZATION_ID" \
+      --app "YOUR_APP_ID" \
+      --version "1.2.3" \
+      --locale "en-US" \
       --path "./screenshots/ipad" \
       --device-type "IPAD_PRO_3GEN_129"
     ```
   </Step>
 </Steps>
+
+If you already have a version localization ID, `--version-localization
+"LOCALIZATION_ID"` uploads to it directly. `asc localizations list --app
+"YOUR_APP_ID" --version "1.2.3"` shows each localization's ID.
 
 ### Device Types
 
@@ -168,7 +179,7 @@ asc screenshots delete --id "SCREENSHOT_ID" --confirm
     asc screenshots capture \
       --bundle-id "com.example.myapp" \
       --name "home-screen" \
-      --output "./screenshots/raw"
+      --output-dir "./screenshots/raw"
     ```
 
     This captures from the currently running simulator.
@@ -181,7 +192,7 @@ asc screenshots delete --id "SCREENSHOT_ID" --confirm
     asc screenshots frame \
       --input "./screenshots/raw/home-screen.png" \
       --device "iphone-air" \
-      --output "./screenshots/framed"
+      --output-dir "./screenshots/framed"
     ```
 
     See available device frames:
@@ -291,14 +302,39 @@ List supported devices for framing:
 asc screenshots list-frame-devices --output json
 ```
 
-Common devices:
+Supported devices:
 
-* `iphone-air` - iPhone with edge-to-edge display
-* `iphone-14-pro` - iPhone 14 Pro
-* `iphone-se` - iPhone SE
-* `ipad-pro-129` - 12.9" iPad Pro
-* `ipad-air` - iPad Air
-* `apple-watch-series-7` - Apple Watch Series 7
+* iPhone: `iphone-air` (default), `iphone-17-pro`, `iphone-17-pro-max`, `iphone-16e`, `iphone-17`
+* iPad: `ipad-pro-13`, `ipad-pro-11`, `ipad-air-13`, `ipad-air-11`, `ipad-mini`
+* Apple Watch: `watch-series-11`, `watch-ultra-3`
+* Apple TV: `apple-tv`
+* Mac: `mac` (canvas without a bezel)
+
+Frame each device from a capture of the same screen shape, such as a 422x514
+Apple Watch Ultra 3 capture for `watch-ultra-3`. When an input's aspect ratio
+differs from the device screen by more than 2%, `asc screenshots frame` prints a
+warning on stderr, because the image is letterboxed inside the screen.
+
+Each device entry lists its `frameColors`; pass one with `--frame-color`. See [Frame Screenshots](/commands/screenshots#frame-screenshots) for the full device and color matrix.
+
+To frame a whole directory and retry only failed inputs on the next run:
+
+```bash  theme={null}
+asc screenshots frame --input-dir ./screenshots/raw --output-dir ./screenshots/framed \
+  --device ipad-air-13 --frame-color blue --title "Plan every trip" --resume
+```
+
+To keep captions legible on a busy or light background and use a brand font file that is not installed on the machine (for example, a CI runner), add a text box and pass the font file to `--font`:
+
+```bash  theme={null}
+asc screenshots frame --input-dir ./screenshots/raw --output-dir ./screenshots/framed \
+  --device iphone-air --title "Plan every trip" --bg-color "#f2c14e" \
+  --font ./brand/Brand-Bold.ttf --text-box --text-box-color "#1b3a5bcc"
+```
+
+Per-file box settings go in `--overlay-config` entries as `textBox`, `textBoxColor`, `textBoxPadding`, and `textBoxRadius`. See [Frame Screenshots](/commands/screenshots#frame-screenshots) for the defaults and validation rules.
+
+Large batches are CPU-bound. Add `--parallel-workers 4` (up to your CPU count) to render four inputs at once; the receipt order and `--resume` behavior stay the same.
 
 ## Complete Screenshot Workflow Example
 
@@ -310,15 +346,11 @@ set -e
 
 # Configuration
 export ASC_APP_ID="YOUR_APP_ID"
-VERSION_ID="YOUR_VERSION_ID"
+VERSION="1.2.3"
 BUNDLE_ID="com.example.myapp"
 
-# 1. Get localization IDs
-echo "Getting localization IDs..."
-EN_US_LOC_ID=$(asc localizations list --version "$VERSION_ID" --output json | \
-  jq -r '.data[] | select(.attributes.locale == "en-US") | .id')
-
-echo "en-US Localization ID: $EN_US_LOC_ID"
+# 1. Check the version's localizations
+asc localizations list --app "$ASC_APP_ID" --version "$VERSION" --output table
 
 # 2. Create directories
 mkdir -p screenshots/{raw,framed,iphone,ipad}
@@ -333,7 +365,7 @@ for screen in home features settings details; do
   asc screenshots capture \
     --bundle-id "$BUNDLE_ID" \
     --name "$screen" \
-    --output "./screenshots/raw"
+    --output-dir "./screenshots/raw"
 done
 
 # 4. Frame screenshots
@@ -343,7 +375,7 @@ for raw_file in screenshots/raw/*.png; do
   asc screenshots frame \
     --input "$raw_file" \
     --device "iphone-air" \
-    --output "./screenshots/framed/$filename"
+    --output-path "./screenshots/framed/$filename"
 done
 
 # 5. Copy to upload directories
@@ -352,14 +384,16 @@ cp screenshots/framed/*.png screenshots/iphone/
 # 6. Upload to App Store Connect
 echo "Uploading iPhone screenshots..."
 asc screenshots upload \
-  --version-localization "$EN_US_LOC_ID" \
+  --app "$ASC_APP_ID" \
+  --version "$VERSION" \
+  --locale "en-US" \
   --path "./screenshots/iphone" \
   --device-type "IPHONE_65"
 
 echo "Screenshots uploaded successfully!"
 
 # 7. Verify upload
-asc screenshots list --version-localization "$EN_US_LOC_ID"
+asc screenshots list --app "$ASC_APP_ID" --version "$VERSION" --locale "en-US"
 ```
 
 If an upload stops partway through, the command prints a failure artifact path like
