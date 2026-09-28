@@ -152,6 +152,9 @@ func (c *Client) CreateDeveloperICloudContainer(ctx context.Context, request Dev
 		return nil, &DeveloperICloudContainerUnverifiedError{Err: fmt.Errorf("developer portal accepted the iCloud container create but %s; run asc web icloud-containers list before retrying", detail)}
 	}
 	container := created[0]
+	if parseErr != nil {
+		return nil, &DeveloperICloudContainerUnverifiedError{Err: fmt.Errorf("developer portal accepted the iCloud container create, and the read-back found %q with id %s, but the create response disagrees (%w); run asc web icloud-containers list before retrying", request.Identifier, container.ID, parseErr)}
+	}
 	if createdID != "" && container.ID != createdID {
 		return nil, &DeveloperICloudContainerUnverifiedError{Err: fmt.Errorf("developer portal created iCloud container %q with id %s but the read-back returned id %s; run asc web icloud-containers list before retrying", request.Identifier, createdID, container.ID)}
 	}

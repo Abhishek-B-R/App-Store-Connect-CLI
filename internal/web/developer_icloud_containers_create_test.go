@@ -382,3 +382,28 @@ func TestCreateDeveloperICloudContainerMatchesLiveCapture(t *testing.T) {
 		})
 	}
 }
+
+func TestCreateDeveloperICloudContainerRejectsContradictoryCreateResponse(t *testing.T) {
+	for _, tc := range []struct{ name, body, want string }{
+		{"wrong type", `{"data":{"type":"bundleIds","id":"cloud-1","attributes":{"identifier":"` + iCloudCreateTestIdentifier + `"}}}`, "want cloudContainers"},
+		{"wrong identifier", `{"data":` + iCloudContainerFixture("cloud-1", "iCloud.com.example.other", "Example", false) + `}`, "iCloud.com.example.other"},
+		{"not JSON", `<html>`, "failed to parse create response"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			portal := newICloudCreatePortal(t)
+			portal.createHook = func(w http.ResponseWriter, r *http.Request, body []byte) {
+				portal.visible = []string{iCloudContainerFixture("cloud-1", iCloudCreateTestIdentifier, "Example", false)}
+				w.WriteHeader(http.StatusCreated)
+				_, _ = io.WriteString(w, tc.body)
+			}
+			result, err := portal.client().CreateDeveloperICloudContainer(context.Background(), DeveloperICloudContainerCreateRequest{Identifier: iCloudCreateTestIdentifier, Name: "Example"})
+			var unverified *DeveloperICloudContainerUnverifiedError
+			if result != nil || !errors.As(err, &unverified) || !strings.Contains(err.Error(), tc.want) || !strings.Contains(err.Error(), "cloud-1") {
+				t.Fatalf("result = %+v, error = %v; want unverified naming %q and the read-back id", result, err, tc.want)
+			}
+			if portal.createCount() != 1 {
+				t.Fatalf("create POSTs = %d, want 1", portal.createCount())
+			}
+		})
+	}
+}
