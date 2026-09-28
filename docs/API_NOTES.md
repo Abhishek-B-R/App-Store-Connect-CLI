@@ -223,6 +223,12 @@ the App Store Connect web-client source captured for issue #2299:
   Create refuses it before writing; delete cannot report verified success
   from it. Only explicit `data: null` or a relationship 404 means no draft.
 
+## Web-session app create conflicts (`POST /iris/v1/apps`)
+
+- Captured live on 2026-09-29 against disposable app `6759231657`: re-running `asc web apps create --name "ASC Test 20260216074703" --bundle-id com.rudrank.asc.throwaway20260216074703 --sku asc-test-20260216074703 --auto-rename=false` returned HTTP 409 with three `errors[]` entries whose codes are, in order, `ENTITY_ERROR.ATTRIBUTE.INVALID.DUPLICATE`, `ENTITY_ERROR.ATTRIBUTE.INVALID.DUPLICATE` and `ENTITY_ERROR.ATTRIBUTE.INVALID.DUPLICATE.SAME_ACCOUNT`. The CLI exited 5 with `web apps create failed: web api error (status 409) ... codes=[...]`.
+- Only the status and the codes were captured. The `detail`, `title` and `source` of each entry were not printed, so which attribute (name, SKU or bundle ID) each entry refers to is unknown. The captured-shape test fixture carries codes only. A second fixture adds an app-name `detail` and `source` pointers to exercise the `--auto-rename` interaction; those fields are **synthetic** (inferred, not captured) and are labeled as such in `internal/cli/web/web_apps_create_if_exists_test.go`.
+- `asc web apps create --if-exists skip` keys on either code on a 409 and then reads the app back through the public API (`GET /v1/apps?filter[bundleId]=`, then `filter[sku]=`); the read-back is decisive. See `docs/design/if-exists-idempotent-writes.md` for the precedence with `--auto-rename`.
+
 ## Web-session app distribution method
 
 - The public App Store Connect API has no distribution-method surface: `App` and `AppUpdateRequest` in `docs/openapi/latest.json` expose only `contentRightsDeclaration`, `streamlinedPurchasingEnabled`, subscription status URLs, and identity fields, and `AppAvailabilityV2` only carries `availableInNewTerritories`. The setting is web-session only.
