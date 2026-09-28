@@ -1057,6 +1057,14 @@ func resolveWebSession(ctx context.Context, appleID, password, twoFactorCode str
 			return nil, "", false, nil
 		}
 
+		// Apple's sign-in service answered the cached cookie jar with a 5xx
+		// (#2806). Discard that entry before the single clean-jar retry so a
+		// retry that also fails cannot leave it for the next invocation to
+		// replay. A successful fresh login replaces the entry anyway.
+		if !twoFactorStarted && isSigninServerError(loginErr) {
+			printCacheLookupWarning(sessionCacheWarningWriter, staleSessionDiscardWarning(discardProvenStaleSession(reauthAppleID)))
+		}
+
 		// A cached jar can become unusable independently of the credentials,
 		// either before 2FA begins or when the post-2FA session bootstrap is
 		// rejected. Preserve the password source for one fresh fallback.
@@ -1153,6 +1161,8 @@ func resolveWebSession(ctx context.Context, appleID, password, twoFactorCode str
 			}
 			printCacheLookupWarning(sessionCacheWarningWriter, staleSessionDiscardWarning(discardErr))
 			markTwoFactorCodeConsumed()
+		} else if isSigninServerError(err) {
+			printCacheLookupWarning(sessionCacheWarningWriter, staleSessionDiscardWarning(discardProvenStaleSession(resolvedAppleID)))
 		}
 		expiredCachedSession = nil
 		session, _, err = login(candidate)
@@ -1172,6 +1182,9 @@ func resolveWebSession(ctx context.Context, appleID, password, twoFactorCode str
 		}
 	}
 	if err != nil {
+		if isSigninServerError(err) {
+			return nil, "", fmt.Errorf("web auth login failed: %w; %s", err, signinServerErrorHint(resolvedAppleID))
+		}
 		return nil, "", fmt.Errorf("web auth login failed: %w", err)
 	}
 	persistPromptedWebPassword(resolvedAppleID, resolvedPassword)
@@ -1181,6 +1194,21 @@ func resolveWebSession(ctx context.Context, appleID, password, twoFactorCode str
 		}
 	}
 	return session, "fresh", nil
+}
+
+// isSigninServerError reports a 5xx from an Apple IdMSA sign-in stage, which
+// Apple returns both for outages and for throttled sign-in attempts.
+func isSigninServerError(err error) bool {
+	var serviceErr *webcore.SigninServiceError
+	return errors.As(err, &serviceErr) && serviceErr.IsServerError()
+}
+
+func signinServerErrorHint(appleID string) string {
+	appleID = strings.TrimSpace(appleID)
+	if appleID == "" {
+		appleID = "EMAIL"
+	}
+	return fmt.Sprintf("Apple's sign-in service is unavailable or is throttling sign-ins for this account. Wait several minutes before retrying, because every attempt counts toward Apple's limit. If it keeps failing, run `asc web auth logout --apple-id %q` to clear the cached web session, then sign in again", appleID)
 }
 
 func resolveSessionPassword(ctx context.Context, password string) (string, error) {
