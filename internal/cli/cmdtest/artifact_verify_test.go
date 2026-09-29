@@ -118,8 +118,14 @@ func TestRunPKGInfoVerifiesAppleSignedPackage(t *testing.T) {
 	if len(matches) == 0 {
 		t.Skip("no Apple-signed flat package is installed")
 	}
+	// CI runners install /Applications/Xcode.app as a symlink to a versioned
+	// Xcode, and pkg-info refuses to follow symlinks in --path.
+	pkgPath, err := filepath.EvalSymlinks(matches[0])
+	if err != nil {
+		t.Fatalf("resolve %s: %v", matches[0], err)
+	}
 	isolateArtifactCommandEnv(t)
-	exit, receipt, stderr := runVerification(t, "pkg-info", "--path", matches[0], "--verify-signature", "--output", "json")
+	exit, receipt, stderr := runVerification(t, "pkg-info", "--path", pkgPath, "--verify-signature", "--output", "json")
 	if exit != cmd.ExitSuccess || receipt.SignatureVerification != "valid" || !strings.Contains(receipt.SignatureVerificationDetail, "Apple Root CA") {
 		t.Fatalf("exit=%d receipt=%+v stderr=%q", exit, receipt, stderr)
 	}
