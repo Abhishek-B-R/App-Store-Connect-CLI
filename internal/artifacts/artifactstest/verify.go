@@ -304,7 +304,15 @@ func codeSigningCMS(t testing.TB, chain TrustChain, directories [][]byte, hashTy
 // may contain "/" to place files in directories, as in a product archive.
 func SignedXar(t testing.TB, files map[string][]byte, chain TrustChain, created time.Time) []byte {
 	t.Helper()
-	return signedXar(t, files, chain, created, false)
+	return signedXar(t, files, chain, created, false, "")
+}
+
+// SignedXarWithChecksumStyle is SignedXar with member archived and extracted
+// checksums of style: sha1, sha256, sha512, md5, or an unrecognized name,
+// which is written with a SHA-1 value.
+func SignedXarWithChecksumStyle(t testing.TB, files map[string][]byte, chain TrustChain, created time.Time, style string) []byte {
+	t.Helper()
+	return signedXar(t, files, chain, created, false, style)
 }
 
 // SignedXarHashingChecksum is SignedXar in the form older productsign
@@ -312,13 +320,13 @@ func SignedXar(t testing.TB, files map[string][]byte, chain TrustChain, created 
 // rather than the checksum itself.
 func SignedXarHashingChecksum(t testing.TB, files map[string][]byte, chain TrustChain, created time.Time) []byte {
 	t.Helper()
-	return signedXar(t, files, chain, created, true)
+	return signedXar(t, files, chain, created, true, "")
 }
 
-func signedXar(t testing.TB, files map[string][]byte, chain TrustChain, created time.Time, hashChecksum bool) []byte {
+func signedXar(t testing.TB, files map[string][]byte, chain TrustChain, created time.Time, hashChecksum bool, checksumStyle string) []byte {
 	t.Helper()
 	const checksumSize, signatureSize = 20, 256
-	filesXML, heap := xarTreeFiles(files, checksumSize+signatureSize)
+	filesXML, heap := xarTreeFiles(files, checksumSize+signatureSize, checksumStyle)
 	toc := `<xar><toc><checksum style="sha1"><offset>0</offset><size>20</size></checksum>` +
 		`<creation-time>` + created.UTC().Format("2006-01-02T15:04:05") + `</creation-time>` +
 		`<signature style="RSA"><offset>20</offset><size>256</size><KeyInfo xmlns="http://www.w3.org/2000/09/xmldsig#"><X509Data><X509Certificate>` +

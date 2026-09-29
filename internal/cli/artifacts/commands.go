@@ -93,9 +93,10 @@ Without --verify-signature, package signatures and certificate chains are not ve
 With --verify-signature, the check runs offline, with no network or revocation checks. Trust is anchored at the embedded Apple Root CA and Apple Root CA - G3; the embedded WWDR G3, G5, and G6 and Developer ID intermediates and the certificates in the table of contents complete the chain. It verifies:
   - that the checksum stored in the heap matches the compressed table of contents
   - the RSA signature over that checksum
+  - the payload of every file the signed table of contents lists with heap data, including the members of each component package in a product archive: its bytes are read from exactly the recorded heap offset and length and hashed with the recorded archived-checksum algorithm (sha1, sha256, sha384, sha512, or md5). A mismatch, missing checksum, or range outside the package or overlapping another file is invalid, and signatureVerificationDetail names the file path; any other checksum algorithm is unsupported
   - that the first listed certificate chains to an Apple root at the current time. The table of contents creation time is not trusted, so a package whose certificate has since expired reports expired
   - that the signer is an installer certificate, identified by its Apple type markers and installer extended key usage: Developer ID Installer, Mac Installer Distribution (3rd Party Mac Developer Installer), or Apple's own package signing. Any other leaf, including a code-signing certificate or one whose type is not recognized, is untrusted-chain, and signatureVerificationDetail names the detected type
-It does not recompute file payload checksums or verify a CMS x-signature. A package with only an x-signature is unsupported. SHA-1 certificate signatures are not accepted.
+It does not verify a CMS x-signature or extended-attribute checksums, which pkgutil --check-signature also ignores. A package with only an x-signature is unsupported. SHA-1 certificate signatures are not accepted.
 signatureVerification is then valid, invalid, untrusted-chain, expired, or unsupported, and signatureVerificationDetail explains it. Any result other than valid exits 1 after writing the receipt.
 
 Examples:

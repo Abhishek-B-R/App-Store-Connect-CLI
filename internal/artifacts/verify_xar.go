@@ -3,13 +3,21 @@ package artifacts
 import (
 	"bytes"
 	"crypto"
+	"crypto/md5" //nolint:gosec // xar records MD5 member checksums.
 	"crypto/rsa"
+	"crypto/sha1" //nolint:gosec // xar records SHA-1 member checksums.
+	"crypto/sha256"
+	"crypto/sha512"
 	"crypto/subtle"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/binary"
+	"encoding/hex"
+	"errors"
 	"fmt"
+	"hash"
 	"io"
+	"sort"
 	"strings"
 )
 
@@ -45,9 +53,9 @@ func xarChecksumHash(algorithm uint32, name string) (crypto.Hash, string, error)
 
 // verifyXarSignature checks the classic RSA signature of a flat package: the
 // heap checksum must match the compressed table of contents, the signature
-// must cover that checksum, and the signer must chain to an Apple root. File
-// payloads are covered only through their table of contents checksums, which
-// are not recomputed.
+// must cover that checksum, every member's heap bytes must match the archived
+// checksum the signed table of contents records, and the signer must chain to
+// an Apple root.
 func verifyXarSignature(source io.ReaderAt, size int64, document *xarDocument, status string, signatureErr error, policy *trustPolicy) SignatureVerification {
 	switch {
 	case status == SignatureUnreadable:
@@ -69,17 +77,188 @@ func verifyXarSignature(source io.ReaderAt, size int64, document *xarDocument, s
 	if err != nil {
 		return failedVerification(err)
 	}
+	checked, err := verifyXarFileChecksums(source, size, checksum.heap, document.Files)
+	if err != nil {
+		return failedVerification(err)
+	}
+	verified := fmt.Sprintf("table of contents checksum and RSA signature verified and %d file payload %s recomputed", checked, plural(checked, "checksum", "checksums"))
 	chain := policy.evaluateChain(leaf, carried, purposeInstaller)
 	if chain.Status != VerificationValid {
-		chain.Detail = "table of contents checksum and RSA signature verified, but " + chain.Detail
+		chain.Detail = verified + ", but " + chain.Detail
 		return chain
 	}
-	chain.Detail = "table of contents checksum and RSA signature verified; " + chain.Detail + "; file payload checksums"
+	chain.Detail = verified + "; " + chain.Detail
 	if document.XSignature != nil {
-		chain.Detail += ", the CMS x-signature,"
+		chain.Detail += "; the CMS x-signature and revocation were not checked"
+	} else {
+		chain.Detail += "; revocation was not checked"
 	}
-	chain.Detail += " and revocation were not checked"
 	return chain
+}
+
+// xarMemberHash returns the hash for a member checksum style. xar writes
+// lowercase names; the comparison ignores case.
+func xarMemberHash(style string) (func() hash.Hash, bool) {
+	switch strings.ToLower(strings.TrimSpace(style)) {
+	case "sha1":
+		return sha1.New, true
+	case "sha256":
+		return sha256.New, true
+	case "sha384":
+		return sha512.New384, true
+	case "sha512":
+		return sha512.New, true
+	case "md5":
+		return md5.New, true
+	}
+	return nil, false
+}
+
+// xarMemberCheck is one member whose heap bytes the table of contents binds.
+type xarMemberCheck struct {
+	label          string
+	offset, length int64
+	style          string
+	newHash        func() hash.Hash
+	want           []byte
+}
+
+type xarHeapSpan struct {
+	offset, length int64
+	style          string
+}
+
+// verifyXarFileChecksums recomputes the archived checksum of every member the
+// signed table of contents lists with heap data, including the members of
+// component packages in a product archive, and returns how many it checked.
+// Extended attributes are not checked, matching pkgutil --check-signature.
+// Every range is validated before any byte is hashed: it must lie inside the
+// heap, and ranges may only overlap by being identical, as deduplicated xar
+// members are, so the bytes hashed never exceed the heap. Each member is
+// hashed in a stream over exactly its declared range. A mismatch is reported
+// before an unsupported checksum style.
+func verifyXarFileChecksums(source io.ReaderAt, size, heap int64, files []xarFile) (int, error) {
+	heapSize := size - heap
+	if heapSize < 0 {
+		return 0, fmt.Errorf("xar heap is outside the package")
+	}
+	var checks []xarMemberCheck
+	var unsupported error
+	add := func(label string, offset, length int64, archived *xarFileChecksum) error {
+		check, err := xarMemberChecksum(label, offset, length, archived, heapSize)
+		var unsupportedErr unsupportedError
+		switch {
+		case errors.As(err, &unsupportedErr):
+			if unsupported == nil {
+				unsupported = err
+			}
+		case err != nil:
+			return err
+		}
+		checks = append(checks, check)
+		return nil
+	}
+	var collect func(prefix string, files []xarFile) error
+	collect = func(prefix string, files []xarFile) error {
+		for _, file := range files {
+			name := prefix + file.Name
+			if file.Data.XMLName.Local != "" {
+				if err := add(fmt.Sprintf("file %q", name), file.Data.Offset, file.Data.Length, file.Data.ArchivedChecksum); err != nil {
+					return err
+				}
+			}
+			if err := collect(name+"/", file.Files); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	if err := collect("", files); err != nil {
+		return 0, err
+	}
+	if err := checkXarRangesDisjoint(checks); err != nil {
+		return 0, err
+	}
+	digests := map[xarHeapSpan][]byte{}
+	checked := 0
+	for _, check := range checks {
+		if check.newHash == nil {
+			continue
+		}
+		span := xarHeapSpan{offset: check.offset, length: check.length, style: check.style}
+		got, seen := digests[span]
+		if !seen {
+			hasher := check.newHash()
+			if _, err := io.Copy(hasher, io.NewSectionReader(source, heap+check.offset, check.length)); err != nil {
+				return 0, fmt.Errorf("read xar %s: %w", check.label, err)
+			}
+			got = hasher.Sum(nil)
+			digests[span] = got
+		}
+		if subtle.ConstantTimeCompare(got, check.want) != 1 {
+			return 0, fmt.Errorf("xar %s does not match its archived %s checksum", check.label, check.style)
+		}
+		checked++
+	}
+	if unsupported != nil {
+		return 0, unsupported
+	}
+	return checked, nil
+}
+
+// xarMemberChecksum validates a heap range and its archived checksum. label
+// names the member in errors. For an unsupported style it returns the range
+// with a nil hash and an error.
+func xarMemberChecksum(label string, offset, length int64, archived *xarFileChecksum, heapSize int64) (xarMemberCheck, error) {
+	if offset < 0 || length < 0 || offset > heapSize || length > heapSize-offset {
+		return xarMemberCheck{}, fmt.Errorf("xar %s data is outside the package", label)
+	}
+	check := xarMemberCheck{label: label, offset: offset, length: length}
+	if archived == nil {
+		return xarMemberCheck{}, fmt.Errorf("xar %s has no archived checksum", label)
+	}
+	check.style = strings.ToLower(strings.TrimSpace(archived.Style))
+	newHash, ok := xarMemberHash(check.style)
+	if !ok {
+		return check, errUnsupportedf("xar %s archived checksum style %q is not supported", label, archived.Style)
+	}
+	want, err := hex.DecodeString(strings.TrimSpace(archived.Value))
+	if err != nil || len(want) != newHash().Size() {
+		return xarMemberCheck{}, fmt.Errorf("xar %s archived checksum is malformed", label)
+	}
+	check.newHash, check.want = newHash, want
+	return check, nil
+}
+
+// checkXarRangesDisjoint rejects member ranges that overlap without being
+// identical.
+func checkXarRangesDisjoint(checks []xarMemberCheck) error {
+	ranges := make([]xarMemberCheck, 0, len(checks))
+	for _, check := range checks {
+		if check.length > 0 {
+			ranges = append(ranges, check)
+		}
+	}
+	sort.Slice(ranges, func(i, j int) bool {
+		if ranges[i].offset != ranges[j].offset {
+			return ranges[i].offset < ranges[j].offset
+		}
+		return ranges[i].length < ranges[j].length
+	})
+	end := int64(0)
+	for index, current := range ranges {
+		if index > 0 {
+			previous := ranges[index-1]
+			if current.offset == previous.offset && current.length == previous.length {
+				continue
+			}
+			if current.offset < end {
+				return fmt.Errorf("xar %s and %s have overlapping data ranges", previous.label, current.label)
+			}
+		}
+		end = current.offset + current.length
+	}
+	return nil
 }
 
 type xarChecksum struct {

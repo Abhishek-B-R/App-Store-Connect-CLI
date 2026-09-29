@@ -4,7 +4,12 @@ import (
 	"bytes"
 	"compress/gzip"
 	"compress/zlib"
+	"crypto/md5"  //nolint:gosec // xar format hash.
+	"crypto/sha1" //nolint:gosec // xar format hash.
+	"crypto/sha256"
+	"crypto/sha512"
 	"encoding/binary"
+	"encoding/hex"
 	"fmt"
 	"sort"
 	"strconv"
@@ -16,13 +21,18 @@ import (
 // files in directories, the layout of a product archive's component packages.
 func XarTree(t testing.TB, files map[string][]byte, extraTOC string) []byte {
 	t.Helper()
-	filesXML, heap := xarTreeFiles(files, 0)
+	filesXML, heap := xarTreeFiles(files, 0, "")
 	return xarBytes(t, []byte(`<xar><toc>`+extraTOC+filesXML+`</toc></xar>`), heap)
 }
 
 // xarTreeFiles returns the table of contents file elements and heap for files,
-// whose names may contain "/". Member offsets start at heapBase.
-func xarTreeFiles(files map[string][]byte, heapBase int) (string, []byte) {
+// whose names may contain "/". Member offsets start at heapBase, and each
+// member records archived and extracted checksums of checksumStyle, which
+// defaults to sha1.
+func xarTreeFiles(files map[string][]byte, heapBase int, checksumStyle string) (string, []byte) {
+	if checksumStyle == "" {
+		checksumStyle = "sha1"
+	}
 	type node struct {
 		children map[string]*node
 		data     []byte
@@ -61,7 +71,11 @@ func xarTreeFiles(files map[string][]byte, heapBase int) (string, []byte) {
 				offset := heapBase + heap.Len()
 				heap.Write(child.data)
 				size := strconv.Itoa(len(child.data))
-				toc.WriteString(`<type>file</type><data><length>` + size + `</length><offset>` + strconv.Itoa(offset) + `</offset><size>` + size + `</size><encoding style="application/octet-stream"/></data>`)
+				digest := memberChecksum(checksumStyle, child.data)
+				toc.WriteString(`<type>file</type><data><length>` + size + `</length><offset>` + strconv.Itoa(offset) + `</offset><size>` + size + `</size>` +
+					`<extracted-checksum style="` + checksumStyle + `">` + digest + `</extracted-checksum>` +
+					`<archived-checksum style="` + checksumStyle + `">` + digest + `</archived-checksum>` +
+					`<encoding style="application/octet-stream"/></data>`)
 			} else {
 				toc.WriteString(`<type>directory</type>`)
 				write(child)
@@ -71,6 +85,28 @@ func xarTreeFiles(files map[string][]byte, heapBase int) (string, []byte) {
 	}
 	write(root)
 	return toc.String(), heap.Bytes()
+}
+
+// memberChecksum returns the hex digest of data for a xar checksum style. An
+// unrecognized style gets a SHA-1 digest, as a package written with an
+// algorithm the verifier does not implement would carry some digest.
+func memberChecksum(style string, data []byte) string {
+	var digest []byte
+	switch style {
+	case "md5":
+		sum := md5.Sum(data) //nolint:gosec // xar format hash.
+		digest = sum[:]
+	case "sha256":
+		sum := sha256.Sum256(data)
+		digest = sum[:]
+	case "sha512":
+		sum := sha512.Sum512(data)
+		digest = sum[:]
+	default:
+		sum := sha1.Sum(data) //nolint:gosec // xar format hash.
+		digest = sum[:]
+	}
+	return hex.EncodeToString(digest)
 }
 
 func xarBytes(t testing.TB, toc, heap []byte) []byte {

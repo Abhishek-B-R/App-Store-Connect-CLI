@@ -95,11 +95,11 @@ func TestVerifyXarAgreesWithPkgutil(t *testing.T) {
 	if !checkSignature(data) {
 		t.Skip("pkgutil does not accept the installed package")
 	}
-	if result := verify(data); result.Status != VerificationValid || !strings.Contains(result.Detail, "leaf is an Apple Software Update signing certificate") {
+	if result := verify(data); result.Status != VerificationValid || !strings.Contains(result.Detail, "leaf is an Apple Software Update signing certificate") || !strings.Contains(result.Detail, "file payload checksums recomputed") {
 		t.Fatalf("pkgutil accepts the package but verification=%+v", result)
 	}
 
-	document, _, _, err := readXarFiles(bytes.NewReader(data), int64(len(data)))
+	document, heap, _, err := readXarFiles(bytes.NewReader(data), int64(len(data)))
 	if err != nil || document.Signature == nil {
 		t.Fatalf("document=%+v err=%v", document, err)
 	}
@@ -114,6 +114,56 @@ func TestVerifyXarAgreesWithPkgutil(t *testing.T) {
 	}
 	if result := verify(tampered); result.Status != VerificationInvalid {
 		t.Fatalf("tampered verification=%+v", result)
+	}
+
+	// A payload byte changed after signing leaves the signed table of
+	// contents intact; pkgutil rejects it through the member checksum.
+	payload := xarChild(document.Files, "Payload", "file")
+	if payload == nil || payload.Data.Length < 2 {
+		t.Fatalf("package has no payload: %+v", document.Files)
+	}
+	tampered = append([]byte(nil), data...)
+	tampered[int64(len(data))-heap.Size()+payload.Data.Offset+payload.Data.Length/2] ^= 0xff
+	if checkSignature(tampered) {
+		t.Fatal("pkgutil accepted a tampered payload")
+	}
+	if result := verify(tampered); result.Status != VerificationInvalid || !strings.Contains(result.Detail, `xar file "Payload" does not match its archived sha1 checksum`) {
+		t.Fatalf("tampered payload verification=%+v", result)
+	}
+}
+
+// Every package Xcode bundles is Apple-signed; each must verify, payload
+// checksums included, wherever pkgutil accepts it. Packages are read through
+// the file so their payloads stream rather than load into memory.
+func TestVerifyXarAcceptsEveryXcodePackage(t *testing.T) {
+	pkgutil, err := exec.LookPath("pkgutil")
+	if err != nil {
+		t.Skip("pkgutil is not installed")
+	}
+	matches, _ := filepath.Glob("/Applications/Xcode*.app/Contents/Resources/Packages/*.pkg")
+	if len(matches) == 0 {
+		t.Skip("no Xcode packages are installed")
+	}
+	policy := appleTrustPolicyForTest(t)
+	for _, path := range matches {
+		t.Run(filepath.Base(filepath.Dir(filepath.Dir(filepath.Dir(filepath.Dir(path)))))+"/"+filepath.Base(path), func(t *testing.T) {
+			if exec.Command(pkgutil, "--check-signature", path).Run() != nil {
+				t.Skip("pkgutil does not accept the package")
+			}
+			file, err := os.Open(path)
+			if err != nil {
+				t.Skipf("package unavailable: %v", err)
+			}
+			defer file.Close()
+			info, err := file.Stat()
+			if err != nil {
+				t.Fatal(err)
+			}
+			manifest, _ := inspectPKGVerifying(file, info.Size(), policy)
+			if result := manifest.SignatureVerification; result == nil || result.Status != VerificationValid || !strings.Contains(result.Detail, "file payload checksums recomputed") {
+				t.Fatalf("pkgutil accepts %s but verification=%+v", path, result)
+			}
+		})
 	}
 }
 

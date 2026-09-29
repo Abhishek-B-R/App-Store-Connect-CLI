@@ -54,9 +54,16 @@ func TestRunArtifactInfoVerifySignatureFailsClosed(t *testing.T) {
 	info := map[string][]byte{"PackageInfo": []byte(`<pkg-info version="1.0" identifier="com.example.pkg"/>`)}
 	signedPKG := filepath.Join(dir, "signed.pkg")
 	unsignedPKG := filepath.Join(dir, "unsigned.pkg")
+	tamperedPKG := filepath.Join(dir, "tampered.pkg")
+	installerChain := artifactstest.NewTrustChainWithLeaf(t, artifactstest.DeveloperIDInstallerLeaf, time.Now().Add(-time.Hour), time.Now().AddDate(1, 0, 0))
+	// Payload sorts after PackageInfo, so its bytes end the heap; changing
+	// one leaves the signed table of contents intact.
+	tamperedPayload := artifactstest.SignedXar(t, map[string][]byte{"PackageInfo": info["PackageInfo"], "Payload": []byte("payload bytes")}, installerChain, time.Now())
+	tamperedPayload[len(tamperedPayload)-1] ^= 0x01
 	for path, data := range map[string][]byte{
-		signedPKG:   artifactstest.SignedXar(t, info, artifactstest.NewTrustChainWithLeaf(t, artifactstest.DeveloperIDInstallerLeaf, time.Now().Add(-time.Hour), time.Now().AddDate(1, 0, 0)), time.Now()),
+		signedPKG:   artifactstest.SignedXar(t, info, installerChain, time.Now()),
 		unsignedPKG: artifactstest.Xar(t, info, ""),
+		tamperedPKG: tamperedPayload,
 	} {
 		if err := os.WriteFile(path, data, 0o600); err != nil {
 			t.Fatal(err)
@@ -73,6 +80,7 @@ func TestRunArtifactInfoVerifySignatureFailsClosed(t *testing.T) {
 		{"missing IPA", []string{"ipa-info", "--path", filepath.Join(dir, "missing.ipa"), "--verify-signature", "--output", "json"}, "unsupported", "artifact could not be read"},
 		{"untrusted pkg", []string{"pkg-info", "--path", signedPKG, "--verify-signature", "--output", "json"}, "untrusted-chain", "RSA signature verified"},
 		{"unsigned pkg", []string{"pkg-info", "--path", unsignedPKG, "--verify-signature", "--output", "json"}, "invalid", "package is unsigned"},
+		{"tampered pkg payload", []string{"pkg-info", "--path", tamperedPKG, "--verify-signature", "--output", "json"}, "invalid", `xar file "Payload" does not match its archived sha1 checksum`},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -93,6 +101,7 @@ func TestRunArtifactInfoVerifySignatureFailsClosed(t *testing.T) {
 	for _, args := range [][]string{
 		{"ipa-info", "--path", tamperedIPA, "--output", "json"},
 		{"pkg-info", "--path", unsignedPKG, "--output", "json"},
+		{"pkg-info", "--path", tamperedPKG, "--output", "json"},
 	} {
 		exit, receipt, stderr := runVerification(t, args...)
 		if exit != cmd.ExitSuccess || stderr != "" || receipt.SignatureVerification != "not-verified" || receipt.SignatureVerificationDetail != "" {

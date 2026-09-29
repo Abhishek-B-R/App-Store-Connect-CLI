@@ -717,10 +717,20 @@ type xarFile struct {
 }
 
 type xarData struct {
-	Length   int64       `xml:"length"`
-	Size     int64       `xml:"size"`
-	Offset   int64       `xml:"offset"`
-	Encoding xarEncoding `xml:"encoding"`
+	// XMLName is set only when the member has a data element.
+	XMLName          xml.Name
+	Length           int64            `xml:"length"`
+	Size             int64            `xml:"size"`
+	Offset           int64            `xml:"offset"`
+	Encoding         xarEncoding      `xml:"encoding"`
+	ArchivedChecksum *xarFileChecksum `xml:"archived-checksum"`
+}
+
+// xarFileChecksum is the hex digest the table of contents records for a
+// member's bytes in the heap.
+type xarFileChecksum struct {
+	Style string `xml:"style,attr"`
+	Value string `xml:",chardata"`
 }
 
 type xarEncoding struct {
