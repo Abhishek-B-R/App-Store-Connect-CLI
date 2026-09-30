@@ -1074,7 +1074,8 @@ func readStringsFile(path string) (map[string]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	values, err := parseStringsContent(string(data))
+	// Accept a leading UTF-8 byte order mark, as Apple's own parser does.
+	values, err := parseStringsContent(strings.TrimPrefix(string(data), "\ufeff"))
 	if err != nil {
 		return nil, newLocalizationInputError(err)
 	}

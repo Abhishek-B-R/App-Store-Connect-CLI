@@ -72,6 +72,22 @@ func TestReadLocalizationStrings_FileLocale(t *testing.T) {
 	}
 }
 
+func TestReadLocalizationStrings_AcceptsUTF8BOM(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "en-US.strings")
+	if err := os.WriteFile(path, []byte("\xef\xbb\xbf\"description\" = \"Hello\";\n"), 0o644); err != nil {
+		t.Fatalf("write file error: %v", err)
+	}
+
+	values, err := ReadLocalizationStrings(path, nil)
+	if err != nil {
+		t.Fatalf("readLocalizationStrings() error: %v", err)
+	}
+	if values["en-US"]["description"] != "Hello" {
+		t.Fatalf("expected description Hello, got %q", values["en-US"]["description"])
+	}
+}
+
 func TestReadLocalizationStrings_RejectsSymlink(t *testing.T) {
 	dir := t.TempDir()
 	target := filepath.Join(dir, "target.strings")
