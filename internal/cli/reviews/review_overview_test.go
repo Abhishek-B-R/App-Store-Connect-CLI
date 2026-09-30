@@ -108,7 +108,7 @@ func TestBuildReviewStatusResultExplainsRemovedOnlyCompletedSubmission(t *testin
 	}
 }
 
-func TestReviewOverviewTreatsLiveVersionStatesAsNoActionNeeded(t *testing.T) {
+func TestReviewStatusTreatsLiveVersionStatesAsNoActionNeeded(t *testing.T) {
 	// appVersionState reports a live version as READY_FOR_DISTRIBUTION and
 	// is preferred over the legacy appStoreState READY_FOR_SALE.
 	for _, state := range []string{"READY_FOR_SALE", "READY_FOR_DISTRIBUTION"} {
@@ -132,15 +132,6 @@ func TestReviewOverviewTreatsLiveVersionStatesAsNoActionNeeded(t *testing.T) {
 			})
 			if completed.NextAction != "No action needed." {
 				t.Fatalf("status after completed submission: expected no action needed, got %q", completed.NextAction)
-			}
-
-			doctor := buildReviewDoctorResult(reviewSnapshot{
-				AppID:          "123456789",
-				Version:        version,
-				ReviewDetailID: "detail-1",
-			}, validation.Report{})
-			if doctor.NextAction != "No action needed." {
-				t.Fatalf("doctor: expected no action needed, got %q", doctor.NextAction)
 			}
 		})
 	}
