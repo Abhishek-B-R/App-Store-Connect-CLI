@@ -146,3 +146,34 @@ func TestReadFastlaneReviewInformation_MissingDirectory(t *testing.T) {
 		t.Fatalf("expected nil review information, got %#v", info)
 	}
 }
+
+func TestReadFastlaneReviewInformation_StripsUTF8BOM(t *testing.T) {
+	root := t.TempDir()
+	reviewDir := filepath.Join(root, "review_information")
+	if err := os.MkdirAll(reviewDir, 0o755); err != nil {
+		t.Fatalf("mkdir review_information: %v", err)
+	}
+	for name, value := range map[string]string{
+		"first_name.txt":    "Rita",
+		"demo_required.txt": "true",
+	} {
+		if err := os.WriteFile(filepath.Join(reviewDir, name), []byte("\ufeff"+value+"\n"), 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+
+	info, err := readFastlaneReviewInformation(root)
+	if err != nil {
+		t.Fatalf("readFastlaneReviewInformation() error: %v", err)
+	}
+	if info == nil {
+		t.Fatal("expected review information, got nil")
+		return
+	}
+	if info.ContactFirstName == nil || *info.ContactFirstName != "Rita" {
+		t.Fatalf("expected contact first name Rita, got %#v", info.ContactFirstName)
+	}
+	if info.DemoAccountRequired == nil || !*info.DemoAccountRequired {
+		t.Fatalf("expected demo account required true, got %#v", info.DemoAccountRequired)
+	}
+}

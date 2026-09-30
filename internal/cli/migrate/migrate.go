@@ -872,7 +872,8 @@ func migrateExportLocaleDir(locale string) (string, error) {
 }
 
 // readMetadataFile reads an optional metadata file beneath the metadata root.
-// A missing file yields an empty value; a symlinked file is an error.
+// A missing file yields an empty value; a symlinked file is an error. A leading
+// UTF-8 byte order mark is dropped along with surrounding whitespace.
 func readMetadataFile(root rootfs.Root, name string) (string, error) {
 	data, found, err := root.ReadFileOptional(name)
 	if err != nil {
@@ -881,7 +882,7 @@ func readMetadataFile(root rootfs.Root, name string) (string, error) {
 	if !found {
 		return "", nil
 	}
-	return strings.TrimSpace(string(data)), nil
+	return strings.TrimSpace(strings.TrimPrefix(string(data), "\ufeff")), nil
 }
 
 // writeAndCount writes content beneath root and returns 1 when a file was

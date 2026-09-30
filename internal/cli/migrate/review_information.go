@@ -236,7 +236,7 @@ func readOptionalFile(root rootfs.Root, name string) (string, bool, error) {
 	if !found {
 		return "", false, nil
 	}
-	return strings.TrimSpace(string(data)), true, nil
+	return strings.TrimSpace(strings.TrimPrefix(string(data), "\ufeff")), true, nil
 }
 
 func dirExists(path string) (bool, error) {
