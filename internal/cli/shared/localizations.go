@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 	"unicode"
+	"unicode/utf16"
 
 	"github.com/rudrankriyam/App-Store-Connect-CLI/internal/asc"
 	"github.com/rudrankriyam/App-Store-Connect-CLI/internal/validation"
@@ -1219,7 +1220,7 @@ func (p *stringsParser) readQuoted() (string, error) {
 				}
 				b.WriteRune(r)
 			case 'U':
-				r, err := p.readHexRune(8)
+				r, err := p.readUTF16Escape()
 				if err != nil {
 					return "", err
 				}
@@ -1245,6 +1246,57 @@ func (p *stringsParser) readHexRune(length int) (rune, error) {
 		return 0, p.errorf("invalid unicode escape")
 	}
 	return rune(value), nil
+}
+
+// readUTF16Escape reads the body of a \U escape the way Apple's .strings
+// parser does: up to four hex digits naming a UTF-16 code unit, with a high
+// surrogate joined to the \U low surrogate that must follow it.
+func (p *stringsParser) readUTF16Escape() (rune, error) {
+	unit, ok := p.readUpToFourHex()
+	if !ok {
+		return 0, p.errorf("invalid unicode escape")
+	}
+	if !utf16.IsSurrogate(unit) {
+		return unit, nil
+	}
+	if unit >= 0xDC00 || p.peek() != '\\' || p.peekNext() != 'U' {
+		return 0, p.errorf("invalid unicode escape")
+	}
+	p.next()
+	p.next()
+	low, ok := p.readUpToFourHex()
+	if !ok || low < 0xDC00 || low > 0xDFFF {
+		return 0, p.errorf("invalid unicode escape")
+	}
+	return utf16.DecodeRune(unit, low), nil
+}
+
+func (p *stringsParser) readUpToFourHex() (rune, bool) {
+	var value rune
+	digits := 0
+	for digits < 4 && !p.eof() {
+		digit, ok := hexDigitValue(p.peek())
+		if !ok {
+			break
+		}
+		value = value<<4 | digit
+		p.next()
+		digits++
+	}
+	return value, digits > 0
+}
+
+func hexDigitValue(ch rune) (rune, bool) {
+	switch {
+	case ch >= '0' && ch <= '9':
+		return ch - '0', true
+	case ch >= 'a' && ch <= 'f':
+		return ch - 'a' + 10, true
+	case ch >= 'A' && ch <= 'F':
+		return ch - 'A' + 10, true
+	default:
+		return 0, false
+	}
 }
 
 func (p *stringsParser) errorf(message string) error {

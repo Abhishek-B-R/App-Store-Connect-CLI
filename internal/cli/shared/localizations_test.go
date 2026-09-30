@@ -31,6 +31,44 @@ func TestParseStringsContent(t *testing.T) {
 	}
 }
 
+func TestParseStringsContentUnicodeEscapes(t *testing.T) {
+	// Apple's .strings parser reads at most four hex digits after \U and
+	// joins UTF-16 surrogate pairs, which is what plutil and genstrings emit.
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{name: "four digits", input: `"description" = "caf\U00e9 time";`, want: "caf\u00e9 time"},
+		{name: "hex text after escape", input: `"description" = "caf\U00e9cafe";`, want: "caf\u00e9cafe"},
+		{name: "fewer than four digits", input: `"description" = "\Ue9 x";`, want: "\u00e9 x"},
+		{name: "surrogate pair", input: `"description" = "x\UD83D\UDE00y";`, want: "x\U0001F600y"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			values, err := parseStringsContent(tt.input)
+			if err != nil {
+				t.Fatalf("parseStringsContent() error: %v", err)
+			}
+			if values["description"] != tt.want {
+				t.Fatalf("expected %q, got %q", tt.want, values["description"])
+			}
+		})
+	}
+}
+
+func TestParseStringsContentRejectsInvalidUnicodeEscapes(t *testing.T) {
+	for _, input := range []string{
+		`"description" = "\Uzz";`,
+		`"description" = "\UD83Dx";`,
+		`"description" = "\UDE00";`,
+	} {
+		if _, err := parseStringsContent(input); err == nil || !strings.Contains(err.Error(), "invalid unicode escape") {
+			t.Fatalf("expected invalid unicode escape error for %q, got %v", input, err)
+		}
+	}
+}
+
 func TestWriteStringsFile(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "en-US.strings")
